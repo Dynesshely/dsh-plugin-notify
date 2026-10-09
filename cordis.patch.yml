@@ -1,0 +1,5 @@
+# Profile bundle layer for the Session notifier plugin.
+# The Host half is inert; the Client half (package.json -> dsh.client) owns the alerts.
+- insert:
+    - id: session-notifier
+      name: '@local/dsh-session-notifier'
