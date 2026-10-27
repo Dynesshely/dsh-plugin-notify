@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Session Notifier",
-    "description": "Plays a sound and shows a desktop notification when any Session asks a question, requests approval, or finishes a turn; a Subagent's own Session stays quiet when it ends."
+    "description": "Plays a sound and shows a desktop notification when any Session asks a question, requests approval, or genuinely stops for you; loop rounds and a Subagent's own Session stay quiet."
   }
 }

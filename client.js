@@ -13,9 +13,18 @@
  *   - `completionUnread`: a turn finished while that Session was not the one on screen.
  *
  * The plugin diffs successive snapshots of that projection: a new `pendingInteraction` raises an
- * interaction alert, and a `running` true→false transition (or a new `completionUnread`) raises a
- * completion alert. Nothing is subscribed per Session, so a Session the user never opened still
- * notifies. Completion alerts skip Subagent Sessions (`origin: 'subagent'`) — the main Session that
+ * interaction alert, and a `running` true→false transition (or a new `completionUnread`) makes a
+ * completion candidate. Nothing is subscribed per Session, so a Session the user never opened still
+ * notifies.
+ *
+ * A turn boundary is not yet "the AI is waiting for you": loop-style work ends a turn every round
+ * (the goal round driver restarts the Session as soon as the Agent goes idle, a settled Subagent
+ * re-prompts its parent, a queued message opens the next turn). A completion candidate is therefore
+ * held until the Session is provably quiet — it did not resume running and its goal did not advance
+ * a round — and only then delivered. Interaction alerts are never held back: a Session that asks
+ * something *is* waiting for the user. See `createCompletionGate`.
+ *
+ * Completion alerts also skip Subagent Sessions (`origin: 'subagent'`) — the main Session that
  * delegated to them is still running and reports the outcome itself — while their interaction
  * alerts are kept.
  *
@@ -46,6 +55,23 @@ window.__ModuleLoader__.load({
     const MAX_NOTIFICATIONS_PER_BATCH = 4
     /** Minimum gap between two chimes, so a burst of completions cannot become a siren. */
     const CHIME_COOLDOWN_MS = 900
+    /**
+     * How long a finished turn must stay quiet before it counts as "this Session is waiting for
+     * you".
+     *
+     * A loop does not end when a turn ends: the goal round driver, a settled Subagent, or a queued
+     * follow-up all restart the Session by themselves. Measured over the durable session logs, an
+     * automatic continuation restarts the turn a median of 12 ms after the previous one ends, and
+     * 99% do it within 916 ms. A turn still idle after this window is not a loop round.
+     */
+    const COMPLETION_SETTLE_MS = 1200
+    /**
+     * The same window for a Session carrying an *active* goal. Before admitting a round the driver
+     * waits for a durability checkpoint, so a slow round can take seconds; the measured worst case
+     * is 11.1 s. Such a Session is reported only once its goal has stopped advancing, which also
+     * keeps a paused-but-active goal from silencing the Session forever.
+     */
+    const GOAL_QUIET_MS = 15000
     /** Notification-body length cap. */
     const DETAIL_LIMIT = 160
     /**
@@ -56,7 +82,7 @@ window.__ModuleLoader__.load({
 
     const zh = {
       'row.title': '会话提醒',
-      'row.description': '任意会话需要你交互（提问、审批、计划审阅）或本轮结束时，播放提示音并发送桌面通知。子代理自己的会话结束时不提醒。',
+      'row.description': '任意会话需要你交互（提问、审批、计划审阅），或真正停下来等你时，播放提示音并发送桌面通知。循环任务的轮次间隙、子代理自身的会话结束都不提醒。',
       'toggle.sound': '提示音',
       'toggle.desktop': '桌面通知',
       'toggle.skipFocused': '正在查看该会话时不提醒',
@@ -95,7 +121,7 @@ window.__ModuleLoader__.load({
 
     const en = {
       'row.title': 'Session notifications',
-      'row.description': 'Plays a sound and shows a desktop notification when any Session asks a question, requests approval, or finishes a turn. A Subagent finishing its own Session stays quiet.',
+      'row.description': 'Plays a sound and shows a desktop notification when any Session asks a question, requests approval, or genuinely stops for you. Loop rounds and a Subagent finishing its own Session stay quiet.',
       'toggle.sound': 'Sound',
       'toggle.desktop': 'Desktop notification',
       'toggle.skipFocused': 'Stay quiet for the Session on screen',
@@ -578,6 +604,89 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * @returns the Session's goal phase and round counter, when the catalog exposes a goal.
+     *
+     * Every listed row carries `projectionValues`, seeded from the control baseline the Session
+     * Controller sends for the whole list, so `goal` is available without any remote call. A goal
+     * that is `active` keeps producing rounds by itself; `paused`, `blocked` and `complete` all mean
+     * the Session stops on its own and the user is the only one who can restart it.
+     */
+    function goalOf (sessionId, sessions) {
+      try {
+        const goal = sessions.list.getSnapshot().byId[sessionId]?.projectionValues?.goal
+        const phase = goal?.goal?.phase
+        if (typeof phase !== 'string') return undefined
+        const rounds = typeof goal.roundsStarted === 'number' ? goal.roundsStarted : 0
+        return { phase, rounds }
+      } catch {
+        return undefined
+      }
+    }
+
+    /**
+     * Hold completion alerts until the Session has provably stopped working.
+     *
+     * A turn boundary is not the same event as "the AI is waiting for you". Loop-style work ends a
+     * turn every round — the goal round driver restarts the Session as soon as the Agent goes idle,
+     * a settled Subagent re-prompts its parent, a queued message starts the next turn — so the
+     * notifier has to watch what happens *after* the boundary instead of trusting it. Two questions
+     * decide it, both answerable from the catalog:
+     *
+     *   - did the Session start running again? (the loop took the next round)
+     *   - did its goal advance a round? (the loop ran again, but the page never observed the
+     *     `running` edge — updates coalesce, so the round counter is the surviving evidence)
+     *
+     * Nothing here is timing-only: an active goal whose rounds stopped advancing is still reported
+     * after {@link GOAL_QUIET_MS}, so a paused goal cannot silence its Session.
+     * @returns the candidate register plus the evaluator that turns it into deliverable alerts.
+     */
+    function createCompletionGate () {
+      /** @type {Map<string, { since: number, rounds: number }>} */
+      const waiting = new Map()
+
+      return {
+        /** Register one finished turn, remembering the goal round it finished in. */
+        offer (sessionId, sessions, now) {
+          const goal = goalOf(sessionId, sessions)
+          waiting.set(sessionId, { since: now, rounds: goal?.rounds ?? 0 })
+        },
+        /**
+         * Decide what each held candidate has become.
+         * @returns alerts ready to be delivered now, and the next moment worth re-checking.
+         */
+        evaluate (status, sessions, now) {
+          const ready = []
+          let deadline
+          for (const [sessionId, candidate] of [...waiting]) {
+            const state = status.get(sessionId)
+            // The Session resumed, started asking something, or vanished: none of those is a
+            // completion the user still has to hear about.
+            if (state === undefined || state.running === true || state.pendingInteraction !== undefined) {
+              waiting.delete(sessionId)
+              continue
+            }
+            const goal = goalOf(sessionId, sessions)
+            const looping = goal?.phase === 'active'
+            // The round the loop owed us has been admitted, so this boundary was not the end of the work.
+            if (looping && goal.rounds > candidate.rounds) {
+              waiting.delete(sessionId)
+              continue
+            }
+            const due = candidate.since + (looping ? GOAL_QUIET_MS : COMPLETION_SETTLE_MS)
+            if (now < due) {
+              deadline = deadline === undefined ? due : Math.min(deadline, due)
+              continue
+            }
+            waiting.delete(sessionId)
+            ready.push({ kind: 'completion', sessionId })
+          }
+          return { ready, deadline }
+        },
+        clear: () => waiting.clear(),
+      }
+    }
+
+    /**
      * Describe one alert through the Session catalog and the alert locale.
      * @param alert - collected alert.
      * @param sessions - Client Session catalog service.
@@ -873,23 +982,64 @@ window.__ModuleLoader__.load({
       ctx.inject(['uiSession', 'sessions'], (scope) => {
         scope.effect(() => {
           const status = scope.uiSession.sessionStatus
+          const gate = createCompletionGate()
+          const deps = () => ({
+            settings: settings.get(),
+            chime,
+            t,
+            sessions: scope.sessions,
+            uiSession: scope.uiSession,
+            diagnostics,
+          })
           let previous = status.getSnapshot()
-          const off = status.subscribe(() => {
+          let timer
+
+          /** Drop the armed re-check, if any. */
+          const disarm = () => {
+            if (timer === undefined) return
+            clearTimeout(timer)
+            timer = undefined
+          }
+
+          /** Deliver what has become due, then arm one timer for the earliest remaining deadline. */
+          const flush = () => {
+            disarm()
+            const now = Date.now()
+            const { ready, deadline } = gate.evaluate(status.getSnapshot(), scope.sessions, now)
+            if (deadline !== undefined) {
+              timer = setTimeout(() => {
+                timer = undefined
+                flush()
+              }, Math.max(0, deadline - now))
+            }
+            if (ready.length > 0) dispatchAlerts(ready, deps())
+          }
+
+          const onStatus = () => {
             const next = status.getSnapshot()
             const alerts = collectAlerts(previous, next, scope.sessions)
             previous = next
-            if (alerts.length === 0) return
-            dispatchAlerts(alerts, {
-              settings: settings.get(),
-              chime,
-              t,
-              sessions: scope.sessions,
-              uiSession: scope.uiSession,
-              diagnostics,
-            })
-          })
+            // A request for the user cannot wait behind a settle window: it already *is* the
+            // Session asking, so it is delivered immediately.
+            const immediate = alerts.filter((alert) => alert.kind === 'interaction')
+            if (immediate.length > 0) dispatchAlerts(immediate, deps())
+            const now = Date.now()
+            for (const alert of alerts) {
+              if (alert.kind === 'completion') gate.offer(alert.sessionId, scope.sessions, now)
+            }
+            flush()
+          }
+
+          const offStatus = status.subscribe(onStatus)
+          // A goal appearing, finishing, pausing or advancing changes what "quiet" means without
+          // touching the running flag, so the catalog has to drive re-evaluation as well.
+          const offCatalog = scope.sessions.list.subscribe?.(flush)
+
           return () => {
-            off()
+            disarm()
+            gate.clear()
+            offStatus()
+            if (typeof offCatalog === 'function') offCatalog()
           }
         }, 'session-notifier: Session status')
       })
