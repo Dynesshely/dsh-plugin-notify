@@ -80,10 +80,23 @@
 | `index.js` | Host 半边，空实现 |
 | `client.js` | 浏览器半边：订阅会话状态、判定是否真的闲下来、响铃、发桌面通知、注册设置行 |
 | `locale/en.json`、`locale/zh.json` | 插件管理页显示的标题与描述 |
+| `tools/` | 行为测试与阈值复算脚本（见下） |
 
-决策表 / 接线测试位于工作区 `tools/test-session-notifier.mjs`（`node tools/test-session-notifier.mjs`）。它用可控时钟驱动，所以「按住再看」的判定可以被逐条钉住。
+决策表 / 接线测试位于 `tools/test-session-notifier.mjs`：
 
-上面那两个窗口的数字可以用工作区 `tools/probe-round-cadence.mjs` 复算：它读取 `~/.dsh/sessions` 下的会话日志（每行是一个独立 zstd 帧，`tools/lib/session-log.mjs` 负责分帧解压），统计 `turn/end` → 下一次 `turn/start` 的间隔，并按续跑的来源分类。
+```bash
+node clients/desktop/session-notifier/tools/test-session-notifier.mjs
+```
+
+它用可控时钟驱动，所以「按住再看」的判定可以被逐条钉住。
+
+上面那两个窗口的数字可以用 `tools/probe-round-cadence.mjs` 复算：
+
+```bash
+node clients/desktop/session-notifier/tools/probe-round-cadence.mjs
+```
+
+它读取 `~/.dsh/sessions` 下的会话日志（每行是一个独立 zstd 帧，`tools/lib/session-log.mjs` 负责分帧解压），统计 `turn/end` → 下一次 `turn/start` 的间隔，并按续跑的来源分类。
 
 ## 卸载
 
