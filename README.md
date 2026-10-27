@@ -9,6 +9,6 @@ DeepSeek Harness（下称 DSH）的通知类插件集合。
 | `clients/desktop` | `clients/desktop/` | **DeepSeek Harness Desktop**（桌面应用） |
 | `clients/server` | `clients/server/` | **DeepSeek Harness**（服务端 / 自托管部署） |
 
-两条线共享 DSH 的插件接口，但运行环境不同，所以互不引用、各自独立演进。每个分支只维护对应客户端的目录：`clients/desktop` 分支放 `clients/desktop/`，`clients/server` 分支放 `clients/server/`。
+两条线共享 DSH 的插件接口，但运行环境不同，所以互不引用、各自独立演进。`clients/desktop` 分支维护 `clients/desktop/`，`clients/server` 分支维护 `clients/server/`；`main` 汇集已合并进仓库的客户端实现。
 
 各插件的安装与行为说明见其所在目录下的 README。
