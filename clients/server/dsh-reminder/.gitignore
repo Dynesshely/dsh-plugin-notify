@@ -1,0 +1,7 @@
+# This package has no build step and no runtime dependencies: DSH installs it into a profile with
+# `link:`, so no generated artifact ever lands next to the sources. The list below only covers what
+# can still appear here by accident, plus the dev-only test dependency.
+node_modules/
+.DS_Store
+Thumbs.db
+*.log
