@@ -1,14 +1,19 @@
-// Distribution of turn/end -> next turn/start across every session, classifying the resumed turn by
-// the messages it actually carries. The goal driver queues its round prompt inside the new turn
-// (`agent/inbox/spliced` -> `turn/start` -> `user/message` with source.kind "goal"), so the
-// discriminator has to look forward into the turn, not backward at the boundary.
+// Distribution of turn/end -> next turn/start across every session, split by *what* resumed the
+// turn. A resumed turn's prompt is persisted after `turn/start`, so the classifier has to read
+// inside the new turn; at the boundary itself a goal round, a settled Subagent and a queued
+// follow-up look identical.
+//
+// The split is the point. A goal round continues in milliseconds, while a Subagent settlement can
+// wake the parent minutes later — those are different events and must not be averaged into one
+// "automatic continuation" figure, or the number stops meaning anything.
 //
 // Run: node clients/desktop/session-notifier/tools/probe-round-cadence.mjs   (from the repo root)
 import { readRecords, sessionFiles } from './lib/session-log.mjs'
 
+/** Message sources the Session produces for itself, without a human at the keyboard. */
 const AUTO = new Set(['goal', 'subagent-settled', 'rule'])
 
-const samples = []   // { ms, auto }
+const samples = []
 for (const file of sessionFiles()) {
   let records
   try { records = readRecords(file) } catch { continue }
@@ -25,48 +30,54 @@ for (const file of sessionFiles()) {
     if (marks[i].kind !== 'end') continue
     const startIndex = marks.findIndex((mark, index) => index > i && mark.kind === 'start')
     if (startIndex === -1) continue
-    // Classify the resumed turn by the user messages it carries before it ends again.
-    let auto = false
+    // Classify the resumed turn by the prompts it carries before it ends again.
+    let source
     let human = false
     for (let j = startIndex + 1; j < marks.length && marks[j].kind !== 'end'; j++) {
       if (marks[j].kind !== 'user') continue
-      if (AUTO.has(marks[j].source)) auto = true
+      if (AUTO.has(marks[j].source)) source ??= marks[j].source
       else human = true
     }
-    samples.push({ ms: marks[startIndex].time - marks[i].time, auto: auto && !human })
+    samples.push({ ms: marks[startIndex].time - marks[i].time, source: human || source === undefined ? 'human' : source })
   }
+}
+
+const groups = new Map()
+for (const sample of samples) {
+  const list = groups.get(sample.source) ?? []
+  list.push(sample.ms)
+  groups.set(sample.source, list)
 }
 
 const describe = (label, values) => {
   if (values.length === 0) { console.log(`${label}: none`); return }
   const sorted = values.slice().sort((a, b) => a - b)
   const pick = (p) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))]
-  console.log(`${label}: n=${sorted.length} min=${sorted[0]}ms p50=${pick(0.5)}ms p90=${pick(0.9)}ms p99=${pick(0.99)}ms max=${sorted.at(-1)}ms`)
+  console.log(`${label.padEnd(17)} n=${String(sorted.length).padStart(5)}  min=${String(sorted[0]).padStart(7)}ms  p50=${String(pick(0.5)).padStart(7)}ms  p90=${String(pick(0.9)).padStart(7)}ms  p99=${String(pick(0.99)).padStart(8)}ms  max=${String(sorted.at(-1)).padStart(9)}ms`)
 }
 
-const auto = samples.filter((sample) => sample.auto).map((sample) => sample.ms)
-const rest = samples.filter((sample) => !sample.auto).map((sample) => sample.ms)
-describe('resumed turn carried an automatic prompt', auto)
-describe('resumed turn carried human input', rest)
+const ORDER = ['goal', 'subagent-settled', 'rule', 'human']
+console.log('=== resumed by ===')
+for (const key of ORDER) if (groups.has(key)) describe(key, groups.get(key))
+for (const [key, values] of groups) if (!ORDER.includes(key)) describe(key, values)
 
-const bucket = (ms) => (ms < 50 ? '<50ms' : ms < 200 ? '50-200ms' : ms < 500 ? '0.2-0.5s' : ms < 1000 ? '0.5-1s' : ms < 5000 ? '1-5s' : ms < 60000 ? '5-60s' : '>60s')
-const ORDER = ['<50ms', '50-200ms', '0.2-0.5s', '0.5-1s', '1-5s', '5-60s', '>60s']
-for (const [label, values] of [['automatic', auto], ['human', rest]]) {
+const bucket = (ms) => (ms < 50 ? '<50ms' : ms < 200 ? '50-200ms' : ms < 1000 ? '0.2-1s' : ms < 5000 ? '1-5s' : ms < 60000 ? '5-60s' : '>60s')
+const BUCKETS = ['<50ms', '50-200ms', '0.2-1s', '1-5s', '5-60s', '>60s']
+for (const [label, values] of groups) {
   const histogram = new Map()
   for (const ms of values) histogram.set(bucket(ms), (histogram.get(bucket(ms)) ?? 0) + 1)
   console.log(`\n${label} buckets:`)
-  for (const key of ORDER) if (histogram.has(key)) console.log(`  ${key.padStart(8)}: ${histogram.get(key)}`)
+  for (const key of BUCKETS) if (histogram.has(key)) console.log(`  ${key.padStart(8)}: ${histogram.get(key)}`)
 }
 
-const share = (limit) => {
-  if (auto.length === 0) return 0
-  return Math.round((auto.filter((ms) => ms <= limit).length / auto.length) * 1000) / 10
-}
-console.log('\nshare of automatic continuations absorbed by a settle window:')
-for (const limit of [200, 500, 1000, 1500, 2000, 3000, 5000]) console.log(`  ${String(limit).padStart(5)}ms -> ${share(limit)}%`)
-
-const slowAuto = auto.filter((ms) => ms >= 1000).sort((a, b) => b - a).slice(0, 10)
-if (slowAuto.length > 0) {
-  console.log('\nslowest automatic continuations (>=1s):')
-  for (const ms of slowAuto) console.log(`  ${ms}ms`)
+// What a deferral window would absorb, per source. Read this as "how much of this source is really
+// a continuation, not a Session that genuinely went idle".
+console.log('\n=== share absorbed by a window ===')
+for (const [label, values] of groups) {
+  if (label === 'human') continue
+  const rows = [1200, 15000].map((limit) => {
+    const within = values.filter((ms) => ms <= limit).length
+    return `${limit}ms ${Math.round((within / values.length) * 1000) / 10}%`
+  })
+  console.log(`  ${label.padEnd(17)} ${rows.join('  ')}`)
 }
