@@ -16,6 +16,7 @@
     "client.js",
     "cordis.patch.yml",
     "locale",
+    "tools",
     "README.md"
   ],
   "engines": {
@@ -32,7 +33,7 @@
     }
   },
   "scripts": {
-    "check": "node --check index.js && node --check client.js",
+    "check": "node --check index.js && node --check client.js && node --check tools/test-session-notifier.mjs && node --check tools/probe-round-cadence.mjs && node --check tools/lib/session-log.mjs",
     "test": "node tools/test-session-notifier.mjs"
   }
 }

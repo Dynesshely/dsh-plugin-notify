@@ -107,4 +107,14 @@ npm run check                                          # 语法检查
 
 它**不能**证明真实浏览器里出声、Windows toast 的最终观感与桌面应用内的行为——这些需要真实 GUI 验证。
 
-插件自身零运行时依赖，测试也不需要额外依赖。
+### 阈值复算
+
+`tools/probe-round-cadence.mjs` 读取 `~/.dsh/sessions` 的持久化日志（每行一个 zstd 帧，`tools/lib/session-log.mjs` 负责分帧解压），按「谁唤醒了下一轮」分类统计 `turn/end` → 下一次 `turn/start` 的间隔，用来复核 1.2s / 15s 两个窗口：
+
+```bash
+node session-notifier/tools/probe-round-cadence.mjs
+```
+
+本机实测（2026-11）：goal 续跑 p99 ≈ 375ms（1.2s 窗口可吸收 100%），human 间隔 p50 约 6 分钟，subagent 结算多在 60s 以上。窗口数值与观测一致。
+
+插件自身零运行时依赖，测试与复算脚本同样不需要额外依赖。
