@@ -44,7 +44,11 @@
  *   `setSettings()`, `resetSettings()`; the old `__dshReminder` alias is kept.
  */
 window.__ModuleLoader__.load({
-  id: 'session-notifier',
+  // Must equal the package name: the client module loader keys factories by
+  // the bundle row id (`dsh-session-notifier`) and executes the batch script
+  // once. A mismatched id makes the row look unregistered and re-loads the
+  // one-resource URL, which then throws a duplicate-registration error.
+  id: 'dsh-session-notifier',
 
   factory(require) {
     const React = require('react')
