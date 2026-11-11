@@ -1,0 +1,10 @@
+# Keep LF in the repository and in every checkout, whatever core.autocrlf says. The client half is
+# served to the browser byte-for-byte by DSH, so a CRLF checkout would change what the page runs and
+# turn every diff into noise.
+* text=auto eol=lf
+
+# Binary assets must never be normalised.
+*.png binary
+*.ico binary
+*.jpg binary
+*.webp binary

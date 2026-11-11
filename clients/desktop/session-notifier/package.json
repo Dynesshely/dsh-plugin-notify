@@ -1,0 +1,21 @@
+{
+  "name": "@local/dsh-session-notifier",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sound and desktop notifications when any Session needs you: questions, approvals, completions.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}
