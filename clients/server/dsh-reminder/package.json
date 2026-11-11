@@ -1,7 +1,7 @@
 {
   "name": "dsh-reminder",
-  "version": "0.1.0",
-  "description": "DSH web plugin: chime and desktop-notify when a session needs your answer, an approval, or finishes a turn.",
+  "version": "0.2.0",
+  "description": "DSH web plugin: chime and desktop-notify when a session needs your answer, an approval, or finishes a turn, with configurable titles and a rounded notification icon.",
   "private": true,
   "type": "module",
   "main": "lib/index.js",
