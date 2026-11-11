@@ -7,7 +7,7 @@
 // wake the parent minutes later — those are different events and must not be averaged into one
 // "automatic continuation" figure, or the number stops meaning anything.
 //
-// Run: node clients/desktop/session-notifier/tools/probe-round-cadence.mjs   (from the repo root)
+// Run: node session-notifier/tools/probe-round-cadence.mjs   (from the repo root)
 import { readRecords, sessionFiles } from './lib/session-log.mjs'
 
 /** Message sources the Session produces for itself, without a human at the keyboard. */

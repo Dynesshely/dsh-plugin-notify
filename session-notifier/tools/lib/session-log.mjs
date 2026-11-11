@@ -3,8 +3,7 @@
 // frame magic, decompress each frame, and fall back to merging neighbours when a magic byte
 // sequence appears inside compressed data.
 //
-// Run: node tools/probe-session-log-frames.mjs [fileIndex]   — shape of one file
-//      node tools/probe-goal-round-gaps.mjs                  — real goal-round gaps
+// Run: node session-notifier/tools/probe-round-cadence.mjs     — turn boundary cadence
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'

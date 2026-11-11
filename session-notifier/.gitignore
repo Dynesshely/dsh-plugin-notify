@@ -1,4 +1,4 @@
-# This package has no build step and no dependencies of its own: DSH installs it into a profile with
+# This package has no build step and no runtime dependencies: DSH installs it into a profile with
 # `link:`, so no generated artifact ever lands next to the sources. The list below only covers what
 # can still appear here by accident.
 node_modules/

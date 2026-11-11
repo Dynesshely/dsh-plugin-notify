@@ -1,0 +1,39 @@
+{
+  "name": "dsh-session-notifier",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "DSH web plugin: a chime and a desktop notification when a session needs your answer, an approval, or has genuinely stopped for you.",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale",
+    "tools",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
+  },
+  "scripts": {
+    "check": "node --check index.js && node --check client.js && node --check tools/test-session-notifier.mjs && node --check tools/probe-round-cadence.mjs && node --check tools/lib/session-log.mjs",
+    "test": "node tools/test-session-notifier.mjs"
+  }
+}
