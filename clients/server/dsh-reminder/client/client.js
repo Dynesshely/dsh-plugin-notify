@@ -10,11 +10,20 @@
  *     "finished while unread" signal (`completionUnread`, which excludes the
  *     main view).
  *
+ * CHILD SESSIONS
+ *   A subagent (including Agent Teams teammates) is a Session with
+ *   `origin === 'subagent'` or a `parentId`; those remind nothing by default so
+ *   one fan-out does not ring dozens of times. `setSubagents(true)` includes
+ *   them again.
+ *
  * DELIVERY
  *   1. a short Web Audio chime (a rising three-note "you are needed", a calmer
  *      falling two-note "done"), and
  *   2. a desktop notification when the browser has granted permission; tapping
  *      it focuses the window and opens that session.
+ *   The notification icon is the page's own icon rasterized through a canvas
+ *   with rounded corners; the shell's favicon is an SVG and its touch icon is a
+ *   bitmap, and notifications render neither faithfully, so both are redrawn.
  *
  * NOISE CONTROL
  *   - Facts present in the very first snapshot are adopted silently: they
@@ -24,12 +33,18 @@
  *     `ready` phase, so a reconnect's baseline replay cannot ring.
  *   - A pending request is deduplicated by its request key: the same question
  *     reminds once, a replacement request reminds again.
- *   - A finished SUBAGENT session does not remind by default (one fan-out can
- *     finish dozens at once); `setSubagents(true)` includes them.
+ *   - A child session (see above) stays silent unless explicitly enabled.
+ *
+ * SETTINGS
+ *   The switches and the four title templates are persisted in `localStorage`
+ *   and editable from Settings → Reminders (which is also registered as a tab
+ *   under Settings → Plugins). Templates accept `{session}`; an empty template
+ *   falls back to the locale default.
  *
  * MANUAL TEST / DIAGNOSIS (browser console)
  *   `__dshReminder.test('done')` — fire a "done" reminder now
  *   `__dshReminder.probe()`      — audio state, permission, counters
+ *   `__dshReminder.getSettings()` / `setSettings({...})` / `resetSettings()`
  */
 window.__ModuleLoader__.load({
   id: 'dsh-reminder',
@@ -40,14 +55,21 @@ window.__ModuleLoader__.load({
     /** Client services: Session catalog (titles, subagent origin, phase), Session status, copy, settings slots. */
     const inject = ['sessions', 'uiSession', 'locale', 'slots']
 
-    /** Platform modules: React, and the host's own button atom for the settings page. */
+    /** Platform modules: React, and the host's own atoms for the settings page. */
     const React = require('react')
-    const { Button } = require('@deepseek-ai/dsh-client-ui-primitives')
+    const { Button, Input, Switch } = require('@deepseek-ai/dsh-client-ui-primitives')
 
     /** Locale namespace owned by this plugin. */
     const NS = 'dsh-reminder'
 
-    /** Reminder copy, keyed by locale. */
+    /** localStorage key holding every user-facing option. */
+    const STORAGE_KEY = 'dsh-reminder:settings'
+
+    /** Notification icon: 128×128 PNG, clipped to a rounded square. */
+    const ICON_SIZE = 128
+    const ICON_RADIUS = Math.round(ICON_SIZE * 0.22)
+
+    /** Reminder copy, keyed by locale. Title templates use the `{session}` placeholder. */
     const DICT = {
       zh: {
         question: '需要你回答',
@@ -59,8 +81,30 @@ window.__ModuleLoader__.load({
         planReviewBody: '有一份计划在等你确认。',
         approvalBody: '有一个工具调用在等你批准。',
         testBody: '这是 dsh-reminder 的测试提醒。',
+        titleQuestion: '需要你回答 · {session}',
+        titlePlanReview: '需要你确认计划 · {session}',
+        titleApproval: '需要你批准 · {session}',
+        titleDone: '会话已完成 · {session}',
         tab: '提醒',
-        settingsIntro: '会话需要你回答或批准、或者它的这一轮跑完时，这个插件会响一声并弹出系统通知。想先看效果就点下面的按钮。',
+        settingsIntro: '会话需要你回答或批准、或者它的这一轮跑完时，这个插件会响一声并弹出系统通知。下面的选项会自动保存在本浏览器。',
+        sectionChannels: '提醒方式',
+        sectionScope: '提醒范围',
+        sectionTitles: '标题模板',
+        sectionTest: '测试与状态',
+        toggleEnabled: '总开关',
+        toggleSound: '提示音',
+        toggleDesktop: '系统通知',
+        toggleChildren: '子会话 / 子代理也提醒',
+        toggleChildrenHint: '子代理由父会话派发，默认静默；一次 fan-out 结束时不会连续响几十次。',
+        toggleAway: '仅当不在该会话时提醒完成',
+        toggleAwayHint: '关闭时，即使你正看着该会话，它跑完这一轮也会提醒。',
+        titlesHint: '用 {session} 插入会话名；留空使用当前语言的默认文案。',
+        templateQuestion: '问题',
+        templatePlanReview: '计划评审',
+        templateApproval: '审批',
+        templateDone: '完成',
+        reset: '恢复默认',
+        saved: '设置自动保存在本浏览器，刷新后仍然有效。',
         testNeedsYou: '测试：需要你介入',
         testDone: '测试：会话已完成',
         statusPermission: '通知权限',
@@ -80,8 +124,30 @@ window.__ModuleLoader__.load({
         planReviewBody: 'A plan is waiting for your review.',
         approvalBody: 'A tool call is waiting for your approval.',
         testBody: 'This is a dsh-reminder test reminder.',
+        titleQuestion: 'Your answer is needed · {session}',
+        titlePlanReview: 'Your plan review is needed · {session}',
+        titleApproval: 'Your approval is needed · {session}',
+        titleDone: 'Session finished · {session}',
         tab: 'Reminders',
-        settingsIntro: 'When a session needs your answer or approval, or finishes a turn, this plugin chimes and posts a desktop notification. Use the buttons below to see it now.',
+        settingsIntro: 'When a session needs your answer or approval, or finishes a turn, this plugin chimes and posts a desktop notification. The options below are saved in this browser.',
+        sectionChannels: 'Channels',
+        sectionScope: 'Scope',
+        sectionTitles: 'Title templates',
+        sectionTest: 'Test and status',
+        toggleEnabled: 'Reminders enabled',
+        toggleSound: 'Chime',
+        toggleDesktop: 'Desktop notification',
+        toggleChildren: 'Also remind for child sessions / subagents',
+        toggleChildrenHint: 'Subagents are dispatched by a parent session; silence by default keeps a fan-out from ringing dozens of times.',
+        toggleAway: 'Only remind for completions while away',
+        toggleAwayHint: 'When off, a finished turn reminds even while you are looking at that session.',
+        titlesHint: 'Use {session} for the session name; leave a field empty to use the default copy for the current language.',
+        templateQuestion: 'Question',
+        templatePlanReview: 'Plan review',
+        templateApproval: 'Approval',
+        templateDone: 'Finished',
+        reset: 'Restore defaults',
+        saved: 'Settings are saved in this browser and survive a refresh.',
         testNeedsYou: 'Test: you are needed',
         testDone: 'Test: session finished',
         statusPermission: 'permission',
@@ -92,6 +158,18 @@ window.__ModuleLoader__.load({
         statusNone: 'none yet',
       },
     }
+
+    /** The four title slots, mapped to their default-copy dictionary keys. */
+    const TITLE_KEYS = ['question', 'planReview', 'approval', 'done']
+    const TITLE_DEFAULT_KEYS = {
+      question: 'titleQuestion',
+      planReview: 'titlePlanReview',
+      approval: 'titleApproval',
+      done: 'titleDone',
+    }
+
+    /** Boolean options persisted alongside the title templates. */
+    const BOOLEAN_KEYS = ['enabled', 'sound', 'desktop', 'subagents', 'onlyWhenAway']
 
     /** Chime notes per reminder kind, in hertz, with their offset in seconds. */
     const CHIME = {
@@ -107,11 +185,89 @@ window.__ModuleLoader__.load({
     let iconUrl
 
     /**
-     * The page's own icon as a URL the Notification API can render. Web
-     * notifications do not draw SVG and the shell declares an SVG favicon
-     * (`<link rel="icon" href="/favicon.svg">`), so that file is fetched and
-     * rasterized through a canvas once per page; a bitmap icon link is used
-     * as-is, and a failed rasterization falls back to the raw href.
+     * The defaults, i.e. the state of a browser that never saved anything.
+     * @returns a fresh settings object with no title overrides.
+     */
+    function defaultSettings() {
+      return {
+        enabled: true,
+        sound: true,
+        desktop: true,
+        subagents: false,
+        onlyWhenAway: false,
+        /** Only the templates the user actually customized; empty means "use the locale default". */
+        titles: {},
+      }
+    }
+
+    /**
+     * Read the persisted options, ignoring anything malformed.
+     * @returns the settings to start this page with.
+     */
+    function loadSettings() {
+      const settings = defaultSettings()
+      let parsed
+      try {
+        if (typeof localStorage === 'undefined') return settings
+        const raw = localStorage.getItem(STORAGE_KEY)
+        if (raw === null) return settings
+        parsed = JSON.parse(raw)
+      } catch {
+        return settings
+      }
+      if (parsed === null || typeof parsed !== 'object') return settings
+      for (const key of BOOLEAN_KEYS) {
+        if (typeof parsed[key] === 'boolean') settings[key] = parsed[key]
+      }
+      if (parsed.titles !== null && typeof parsed.titles === 'object') {
+        for (const key of TITLE_KEYS) {
+          const value = parsed.titles[key]
+          if (typeof value === 'string' && value.trim() !== '') settings.titles[key] = value
+        }
+      }
+      return settings
+    }
+
+    /**
+     * Persist the options; a browser that refuses storage just keeps them page-scoped.
+     * @param settings - the snapshot to write.
+     */
+    function saveSettings(settings) {
+      try {
+        if (typeof localStorage === 'undefined') return
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
+      } catch {
+        /* private mode / quota: the options stay in memory */
+      }
+    }
+
+    /**
+     * Trace a rounded rectangle onto the context's current path.
+     * @param context - the 2D context.
+     * @param x - left edge.
+     * @param y - top edge.
+     * @param width - full width.
+     * @param height - full height.
+     * @param radius - corner radius, clamped to half the shorter side.
+     */
+    function roundedRectPath(context, x, y, width, height, radius) {
+      const r = Math.min(radius, width / 2, height / 2)
+      context.beginPath()
+      context.moveTo(x + r, y)
+      context.arcTo(x + width, y, x + width, y + height, r)
+      context.arcTo(x + width, y + height, x, y + height, r)
+      context.arcTo(x, y + height, x, y, r)
+      context.arcTo(x, y, x + width, y, r)
+      context.closePath()
+    }
+
+    /**
+     * The page's own icon redrawn as a rounded 128×128 PNG the Notification API
+     * can use. The shell declares an SVG favicon (notifications do not draw
+     * SVG) and an `apple-touch-icon` bitmap (drawn as a square white tile), so
+     * every icon source goes through the same canvas: load it, clip a rounded
+     * square, draw, export. A failed fetch/rasterization falls back to the raw
+     * href instead of dropping the icon.
      * @returns the icon URL, or undefined when the page declares no icon.
      */
     async function resolveNotificationIcon() {
@@ -119,14 +275,17 @@ window.__ModuleLoader__.load({
       const href = link?.href
       if (href === undefined) return undefined
       const isSvg = /\.svg(\?|#|$)/i.test(href) || String(link.getAttribute?.('type') ?? '').includes('svg')
-      if (!isSvg) return href
       let objectUrl
       try {
-        const response = await fetch(href, { credentials: 'same-origin' })
-        if (response.ok === false) return href
-        objectUrl = URL.createObjectURL(await response.blob())
+        let source = href
+        if (isSvg) {
+          const response = await fetch(href, { credentials: 'same-origin' })
+          if (response.ok === false) return href
+          objectUrl = URL.createObjectURL(await response.blob())
+          source = objectUrl
+        }
         const image = new Image()
-        image.src = objectUrl
+        image.src = source
         await (typeof image.decode === 'function'
           ? image.decode()
           : new Promise((resolve, reject) => {
@@ -134,11 +293,13 @@ window.__ModuleLoader__.load({
             image.onerror = reject
           }))
         const canvas = document.createElement('canvas')
-        canvas.width = 128
-        canvas.height = 128
+        canvas.width = ICON_SIZE
+        canvas.height = ICON_SIZE
         const context = canvas.getContext('2d')
         if (context === null) return href
-        context.drawImage(image, 0, 0, 128, 128)
+        roundedRectPath(context, 0, 0, ICON_SIZE, ICON_SIZE, ICON_RADIUS)
+        context.clip()
+        context.drawImage(image, 0, 0, ICON_SIZE, ICON_SIZE)
         return canvas.toDataURL('image/png')
       } catch {
         return href
@@ -265,16 +426,44 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Whether one session's completion is worth a reminder: top-level sessions
-     * always, subagent sessions only when explicitly enabled.
+     * Whether one session is a child of another: a subagent (including a Team
+     * teammate session) is catalogued with `origin: 'subagent'` and/or a
+     * `parentId`. A row we cannot see is treated as top-level so a manual test
+     * or a not-yet-listed session is never silently dropped.
      * @param ctx - client context.
      * @param sessionId - session identity.
-     * @param includeSubagents - the live option.
-     * @returns whether to remind.
+     * @returns whether to treat the session as a child.
      */
-    function completionCounts(ctx, sessionId, includeSubagents) {
-      if (includeSubagents) return true
-      return sessionRow(ctx, sessionId)?.origin !== 'subagent'
+    function isChildSession(ctx, sessionId) {
+      const row = sessionRow(ctx, sessionId)
+      if (row === undefined) return false
+      return row.origin === 'subagent' || row.parentId !== undefined
+    }
+
+    /**
+     * The template for one title slot: the user's override when present,
+     * otherwise the localized default.
+     * @param t - bound translator.
+     * @param state - live options.
+     * @param kind - 'question' | 'planReview' | 'approval' | 'done'.
+     * @returns the template string.
+     */
+    function titleTemplate(t, state, kind) {
+      return state.titles[kind] ?? t(TITLE_DEFAULT_KEYS[kind])
+    }
+
+    /**
+     * Render a title template. `{session}` becomes the session label; with no
+     * label the placeholder and its dangling separator are removed, so a
+     * session-less test reminder stays clean.
+     * @param template - the template string.
+     * @param label - the session label, or '' when unknown.
+     * @returns the notification title.
+     */
+    function renderTitle(template, label) {
+      const title = template.split('{session}').join(label).trim()
+      if (label !== '') return title
+      return title.replace(/[\s·:：|/\\\-–—]+$/u, '').trim()
     }
 
     /**
@@ -303,27 +492,26 @@ window.__ModuleLoader__.load({
     function remind(ctx, state, t, kind, sessionId, interaction) {
       if (!state.enabled) return
       const label = sessionLabel(ctx, sessionId)
-      const domain = kind === 'needs-you' ? (interaction?.kind ?? 'question') : null
-      let headline
+      let titleKind
       let body
       if (kind === 'done') {
-        headline = `✅ ${t('done')}`
+        titleKind = 'done'
         body = t('doneBody')
-      } else if (domain === 'approval') {
-        headline = `🔐 ${t('approval')}`
+      } else if (interaction?.kind === 'approval') {
+        titleKind = 'approval'
         body = interaction?.reason ?? interaction?.toolName ?? t('approvalBody')
-      } else if (domain === 'plan-review') {
-        headline = `📋 ${t('planReview')}`
+      } else if (interaction?.kind === 'plan-review') {
+        titleKind = 'planReview'
         body = interaction?.questions?.[0]?.question ?? t('planReviewBody')
       } else {
-        headline = `❓ ${t('question')}`
+        titleKind = 'question'
         body = interaction?.questions?.[0]?.question ?? t('questionBody')
       }
-      const title = label === '' ? headline : `${headline} · ${label}`
       // The manual console hook carries no session and no request: it says so
       // rather than imitating a real question.
       const manual = kind === 'done' ? sessionId === undefined : sessionId === undefined && interaction === undefined
       if (manual) body = t('testBody')
+      const title = renderTitle(titleTemplate(t, state, titleKind), label)
       if (state.sound) chime(kind)
       if (state.desktop && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
         try {
@@ -357,13 +545,15 @@ window.__ModuleLoader__.load({
     function apply(ctx) {
       if (typeof document === 'undefined') return
       const t = translator(ctx)
+      const stored = loadSettings()
       const state = {
-        enabled: true,
-        sound: true,
-        desktop: true,
-        subagents: false,
-        /** Restrict completion reminders to the Client's "finished while unread" signal. */
-        onlyWhenAway: false,
+        enabled: stored.enabled,
+        sound: stored.sound,
+        desktop: stored.desktop,
+        subagents: stored.subagents,
+        onlyWhenAway: stored.onlyWhenAway,
+        /** Title overrides only; an absent slot follows the locale default. */
+        titles: stored.titles,
         /** sessionId → { pending, running, unread } last adopted. */
         seen: new Map(),
         /** False until the first snapshot has been adopted without reminding. */
@@ -372,14 +562,54 @@ window.__ModuleLoader__.load({
         last: null,
       }
 
+      /** The persisted part of the state, as a fresh object. */
+      const settingsSnapshot = () => ({
+        enabled: state.enabled,
+        sound: state.sound,
+        desktop: state.desktop,
+        subagents: state.subagents,
+        onlyWhenAway: state.onlyWhenAway,
+        titles: { ...state.titles },
+      })
+      const persist = () => saveSettings(settingsSnapshot())
+      /**
+       * Apply and persist one settings patch.
+       * @param patch - booleans and/or title overrides; an empty title deletes the override.
+       * @returns the new settings snapshot.
+       */
+      const updateSettings = (patch) => {
+        if (patch === null || typeof patch !== 'object') return settingsSnapshot()
+        for (const key of BOOLEAN_KEYS) {
+          if (typeof patch[key] === 'boolean') state[key] = patch[key]
+        }
+        if (patch.titles !== null && typeof patch.titles === 'object') {
+          for (const key of TITLE_KEYS) {
+            if (!(key in patch.titles)) continue
+            const value = patch.titles[key]
+            if (typeof value === 'string' && value.trim() !== '') state.titles[key] = value
+            else delete state.titles[key]
+          }
+        }
+        persist()
+        return settingsSnapshot()
+      }
+      const resetSettings = () => {
+        const defaults = defaultSettings()
+        for (const key of BOOLEAN_KEYS) state[key] = defaults[key]
+        state.titles = defaults.titles
+        persist()
+        return settingsSnapshot()
+      }
+
       ctx.effect(() => {
         const dispose = ctx.locale?.register?.(NS, DICT)
         return typeof dispose === 'function' ? dispose : undefined
       }, 'dsh-reminder: dictionaries')
 
       // Resolve the page icon once (the shell's favicon is an SVG, which
-      // notifications cannot draw). Runs at activation so it is ready long
-      // before the first reminder; `probe().icon` reports the outcome.
+      // notifications cannot draw; its touch icon is a square white bitmap).
+      // Runs at activation so it is ready long before the first reminder;
+      // `probe().icon` reports the outcome.
       void resolveNotificationIcon().then((value) => {
         iconUrl = value
         iconState = value === undefined ? 'none' : 'ready'
@@ -427,9 +657,11 @@ window.__ModuleLoader__.load({
           const unread = status.completionUnread === true
           next.set(sessionId, { pending: pendingKey, running, unread })
           if (!state.primed) continue
+          const child = isChildSession(ctx, sessionId)
           // 1. A newly arrived request (question / plan review / approval).
           //    It outranks a completion: the session is not done, it waits.
           if (pendingKey !== null && pendingKey !== previous?.pending) {
+            if (child && !state.subagents) continue
             remind(ctx, state, t, 'needs-you', sessionId, pending)
             continue
           }
@@ -445,7 +677,7 @@ window.__ModuleLoader__.load({
           if (!completion) continue
           // A reconnect's baseline replay must not ring.
           if (!ready) continue
-          if (!completionCounts(ctx, sessionId, state.subagents)) continue
+          if (child && !state.subagents) continue
           remind(ctx, state, t, 'done', sessionId, undefined)
         }
         state.seen = next
@@ -461,23 +693,34 @@ window.__ModuleLoader__.load({
         /** Whether any reminder is delivered. */
         isEnabled: () => state.enabled,
         /** Toggle the whole engine. */
-        setEnabled: (value) => { state.enabled = value !== false },
+        setEnabled: (value) => { updateSettings({ enabled: value !== false }) },
         /** Whether the chime plays. */
         isSoundEnabled: () => state.sound,
         /** Toggle the chime. */
-        setSound: (value) => { state.sound = value !== false },
+        setSound: (value) => { updateSettings({ sound: value !== false }) },
         /** Whether desktop notifications are attempted. */
         isDesktopEnabled: () => state.desktop,
         /** Toggle desktop notifications. */
-        setDesktop: (value) => { state.desktop = value !== false },
-        /** Whether finished subagent sessions also remind. */
+        setDesktop: (value) => { updateSettings({ desktop: value !== false }) },
+        /** Whether finished child sessions also remind. */
         areSubagentsEnabled: () => state.subagents,
-        /** Toggle reminders for finished subagent sessions. */
-        setSubagents: (value) => { state.subagents = value === true },
+        /** Toggle reminders for finished child sessions. */
+        setSubagents: (value) => { updateSettings({ subagents: value === true }) },
         /** Whether completions only remind when the session is not the main view. */
         isOnlyWhenAway: () => state.onlyWhenAway,
         /** Toggle that restriction. */
-        setOnlyWhenAway: (value) => { state.onlyWhenAway = value === true },
+        setOnlyWhenAway: (value) => { updateSettings({ onlyWhenAway: value === true }) },
+        /** A copy of every persisted option. */
+        getSettings: () => settingsSnapshot(),
+        /** Apply and persist a settings patch; returns the new settings. */
+        setSettings: (patch) => updateSettings(patch),
+        /** Restore every option to its default and persist. */
+        resetSettings: () => resetSettings(),
+        /** Set one title template; an empty value restores the locale default. */
+        setTitleTemplate: (kind, value) => {
+          if (!TITLE_KEYS.includes(kind)) return settingsSnapshot()
+          return updateSettings({ titles: { [kind]: value } })
+        },
         /** The browser's notification permission right now. */
         notificationPermission: () => (typeof Notification === 'undefined' ? 'unsupported' : Notification.permission),
         /** Ask for notification permission (needs a user gesture in Safari). */
@@ -492,6 +735,7 @@ window.__ModuleLoader__.load({
           desktop: state.desktop,
           subagents: state.subagents,
           onlyWhenAway: state.onlyWhenAway,
+          titles: { ...state.titles },
           primed: state.primed,
           trackedSessions: state.seen.size,
           fired: state.fired,
@@ -506,11 +750,7 @@ window.__ModuleLoader__.load({
         }),
         /** What this engine is doing, for diagnostics. */
         describe: () => ({
-          enabled: state.enabled,
-          sound: state.sound,
-          desktop: state.desktop,
-          subagents: state.subagents,
-          onlyWhenAway: state.onlyWhenAway,
+          ...settingsSnapshot(),
           fired: state.fired,
           last: state.last,
         }),
@@ -545,31 +785,96 @@ window.__ModuleLoader__.load({
       ].join(' · ')
 
       /**
-       * Settings → Plugins → dsh-reminder: one click to see and hear what a
-       * reminder looks like, plus the live facts behind a silent one.
+       * Settings → Plugins → dsh-reminder / Settings → Reminders: live options,
+       * title templates, one-click reminders and the facts behind a silent one.
        * @param props - slot props; `t` is bound to this plugin's namespace.
-       * @returns the tab content.
+       * @returns the settings content.
        */
-      function ReminderSettingsTab(props) {
+      function ReminderSettings(props) {
         const translate = typeof props?.t === 'function' ? props.t : t
+        const [settings, setSettings] = React.useState(() => api.getSettings())
         const [facts, setFacts] = React.useState(() => api.probe())
-        const fire = (kind) => () => {
-          api.test(kind)
+        const apply = (patch) => {
+          setSettings(api.setSettings(patch))
           setFacts(api.probe())
         }
+        const text = (content, tone) => React.createElement('span', {
+          style: { fontSize: tone === 'hint' ? '12px' : '13px', lineHeight: '18px', color: `var(--dsw-alias-label-${tone === 'hint' ? 'tertiary' : 'secondary'})` },
+        }, content)
+        const heading = (content) => React.createElement('h3', {
+          style: { margin: 0, fontSize: '13px', fontWeight: 600, color: 'var(--dsw-alias-label-primary)' },
+        }, content)
+        const section = (children) => React.createElement('div', {
+          style: { display: 'flex', flexDirection: 'column', gap: '10px' },
+        }, ...children)
+        const toggler = (label, hint, checked, onChange) => React.createElement('div', {
+          style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' },
+        },
+        React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
+          React.createElement('span', { style: { fontSize: '13px', color: 'var(--dsw-alias-label-primary)' } }, label),
+          hint === undefined ? null : text(hint, 'hint')),
+        React.createElement(Switch, {
+          checked,
+          label,
+          onChange,
+        }))
+        const templateField = (key) => React.createElement('label', {
+          style: { display: 'flex', flexDirection: 'column', gap: '4px' },
+        },
+        React.createElement('span', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } }, translate(`template${key[0].toUpperCase()}${key.slice(1)}`)),
+        React.createElement(Input, {
+          value: settings.titles[key] ?? '',
+          placeholder: translate(TITLE_DEFAULT_KEYS[key]),
+          'aria-label': translate(`template${key[0].toUpperCase()}${key.slice(1)}`),
+          onChange: (event) => apply({ titles: { [key]: event.target.value } }),
+        }))
         return React.createElement('div', {
-          style: { display: 'flex', flexDirection: 'column', gap: '12px' },
+          style: { display: 'flex', flexDirection: 'column', gap: '18px' },
         },
         React.createElement('p', {
           style: { margin: 0, fontSize: '13px', lineHeight: '20px', color: 'var(--dsw-alias-label-secondary)' },
         }, translate('settingsIntro')),
-        React.createElement('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
-          React.createElement(Button, { variant: 'primary', size: 'sm', onClick: fire('needs-you') }, translate('testNeedsYou')),
-          React.createElement(Button, { variant: 'outline', size: 'sm', onClick: fire('done') }, translate('testDone')),
-        ),
-        React.createElement('p', {
-          style: { margin: 0, fontSize: '12px', lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' },
-        }, statusLine(translate, facts)))
+        section([
+          heading(translate('sectionChannels')),
+          toggler(translate('toggleEnabled'), undefined, settings.enabled, (next) => apply({ enabled: next })),
+          toggler(translate('toggleSound'), undefined, settings.sound, (next) => apply({ sound: next })),
+          toggler(translate('toggleDesktop'), undefined, settings.desktop, (next) => apply({ desktop: next })),
+        ]),
+        section([
+          heading(translate('sectionScope')),
+          toggler(translate('toggleChildren'), translate('toggleChildrenHint'), settings.subagents, (next) => apply({ subagents: next })),
+          toggler(translate('toggleAway'), translate('toggleAwayHint'), settings.onlyWhenAway, (next) => apply({ onlyWhenAway: next })),
+        ]),
+        section([
+          heading(translate('sectionTitles')),
+          text(translate('titlesHint'), 'hint'),
+          ...TITLE_KEYS.map(templateField),
+          React.createElement('div', { style: { display: 'flex', gap: '8px' } },
+            React.createElement(Button, {
+              variant: 'outline',
+              size: 'sm',
+              onClick: () => { api.resetSettings(); setSettings(api.getSettings()); setFacts(api.probe()) },
+            }, translate('reset'))),
+        ]),
+        section([
+          heading(translate('sectionTest')),
+          React.createElement('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+            React.createElement(Button, {
+              variant: 'primary',
+              size: 'sm',
+              onClick: () => { api.test('needs-you'); setFacts(api.probe()) },
+            }, translate('testNeedsYou')),
+            React.createElement(Button, {
+              variant: 'outline',
+              size: 'sm',
+              onClick: () => { api.test('done'); setFacts(api.probe()) },
+            }, translate('testDone'))),
+          React.createElement('p', {
+            style: { margin: 0, fontSize: '12px', lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' },
+          }, statusLine(translate, facts)),
+          text(translate('saved'), 'hint'),
+        ]),
+      )
       }
 
       ctx.effect(() => ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({
@@ -578,7 +883,7 @@ window.__ModuleLoader__.load({
         order: 50,
         label: () => t('tab'),
         locale: NS,
-      }, ReminderSettingsTab)), 'dsh-reminder: settings page')
+      }, ReminderSettings)), 'dsh-reminder: settings page')
 
       // The same page also gets its own row in the Settings nav: a tab inside
       // the Plugins section is easy to miss, and "Settings → Reminders" is the
@@ -589,7 +894,7 @@ window.__ModuleLoader__.load({
         order: 90,
         label: () => t('tab'),
         locale: NS,
-      }, ReminderSettingsTab)), 'dsh-reminder: settings nav row')
+      }, ReminderSettings)), 'dsh-reminder: settings nav row')
     }
 
     return { name, inject, apply }
