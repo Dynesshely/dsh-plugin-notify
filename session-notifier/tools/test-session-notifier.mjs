@@ -620,6 +620,44 @@ await check('a manual test notification opens nothing: it names no Session', asy
   assert.deepEqual(opened, [])
 })
 
+await check('typing into the Session retires its completion toast', async () => {
+  // The toast has done its job once the user is back in that Session; leaving it up keeps
+  // claiming the Session is still waiting on them.
+  const { statusStore, clock } = await boot()
+  statusStore.set(snapshot(running('s1')))
+  statusStore.set(snapshot(idle('s1')))
+  clock.advance(SETTLE_MS)
+  assert.equal(notifications.length, 1)
+  statusStore.set(snapshot(running('s1')))
+  assert.equal(notifications[0].closed, true, 'the answered toast is taken down')
+})
+
+await check('only the Session that resumed has its toast retired', async () => {
+  const { statusStore, clock } = await boot()
+  statusStore.set(snapshot(running('s1'), running('s2')))
+  statusStore.set(snapshot(idle('s1'), idle('s2')))
+  clock.advance(SETTLE_MS)
+  assert.equal(notifications.length, 2)
+  statusStore.set(snapshot(running('s1'), idle('s2')))
+  const closed = notifications.filter((item) => item.closed === true).length
+  assert.equal(closed, 1, 'the other Session keeps waiting for the user')
+})
+
+await check('retiring a toast that is not there is harmless', async () => {
+  const { statusStore } = await boot()
+  statusStore.set(snapshot(running('s1')))
+  statusStore.set(snapshot(running('s1')))
+  assert.equal(notifications.length, 0)
+})
+
+await check('an interaction toast is retired when the Session resumes after the answer', async () => {
+  const { statusStore } = await boot()
+  statusStore.set(snapshot([ 's1', { running: false, pendingInteraction: question('q1', 'well?'), completionUnread: false } ]))
+  assert.equal(notifications.length, 1)
+  statusStore.set(snapshot(running('s1')))
+  assert.equal(notifications[0].closed, true)
+})
+
 // ---------------------------------------------------------------- focus and watching
 
 await check('the same Session is not alerted while focused on screen', async () => {

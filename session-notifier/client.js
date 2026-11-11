@@ -703,6 +703,28 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Take one notification down.
+     *
+     * A toast that has already been answered is worse than noise: it keeps claiming the Session
+     * needs the user after the user has dealt with it. `onclose` is detached first so retiring a
+     * toast on purpose cannot be mistaken for the system dismissing it.
+     * @param key - the notification key used when it was shown.
+     * @returns whether a live notification was retired.
+     */
+    function dismissNotification (key) {
+      const notification = liveNotifications.get(key)
+      if (notification === undefined) return false
+      liveNotifications.delete(key)
+      try {
+        notification.onclose = null
+        notification.close()
+      } catch {
+        /* an already-dismissed notification cannot be closed again */
+      }
+      return true
+    }
+
+    /**
      * Bring the DSH window to the front.
      *
      * A page cannot raise its own OS window: Windows refuses a foreground grab from a background
@@ -1523,6 +1545,14 @@ window.__ModuleLoader__.load({
           const onStatus = () => {
             const next = status.getSnapshot()
             const alerts = collectAlerts(previous, next, scope.sessions, settings.get())
+            // The user answered the notification by typing into that Session: the toast has done
+            // its job and must stop claiming the Session still needs them. `running` going back to
+            // true is that hand-over, whether the user sent a prompt or the Session resumed itself.
+            for (const [sessionId, state] of next) {
+              if (state.running === true && previous.get(sessionId)?.running !== true) {
+                dismissNotification(`session-${sessionId}`)
+              }
+            }
             previous = next
             primed = true
             const immediate = alerts.filter((alert) => alert.kind === 'interaction')
