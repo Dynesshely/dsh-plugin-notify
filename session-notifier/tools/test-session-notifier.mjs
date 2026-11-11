@@ -151,7 +151,7 @@ const withGoal = (row, phase, rounds) => ({
 })
 
 /** Boot one isolated plugin instance. */
-async function boot ({ storage = {}, focused = true, current = undefined, permission = 'granted', initialStatus = undefined, notificationApi = true } = {}) {
+async function boot ({ storage = {}, focused = true, current = undefined, permission = 'granted', initialStatus = undefined, notificationApi = true, withWorkspace = true } = {}) {
   notifications.length = 0
   audioContexts = []
   permissionRequests = 0
@@ -163,6 +163,7 @@ async function boot ({ storage = {}, focused = true, current = undefined, permis
   Date.now = () => clock.now()
 
   let focusedNow = focused
+  let focusCalls = 0
   let definition
   const dictionaries = {}
   const gestureHandlers = { pointerdown: [], keydown: [] }
@@ -178,7 +179,7 @@ async function boot ({ storage = {}, focused = true, current = undefined, permis
       const index = list.indexOf(handler)
       if (index >= 0) list.splice(index, 1)
     },
-    focus: () => {},
+    focus: () => { focusCalls += 1 },
     setTimeout: (fn, delay) => clock.set(fn, delay),
   }
   const canvasContext = {
@@ -247,6 +248,9 @@ async function boot ({ storage = {}, focused = true, current = undefined, permis
   const cleanups = []
   const registrations = []
   const services = {}
+  /** Sessions the plugin asked the workspace to open, in order. */
+  const opened = []
+  const uiWorkspace = withWorkspace ? { openSession: (sessionId) => { opened.push(sessionId) } } : undefined
   const ctx = {
     locale: {
       register: (namespace, dictionary) => {
@@ -287,6 +291,9 @@ async function boot ({ storage = {}, focused = true, current = undefined, permis
     reflect: {
       provide: (name, value) => { services[name] = value },
     },
+    // The Session-opening service belongs to another plugin, so it is looked up at click time
+    // rather than injected; a catalog without it must not break the notifier.
+    get: (name) => (name === 'uiWorkspace' ? uiWorkspace : undefined),
   }
 
   plugin.apply(ctx)
@@ -304,6 +311,10 @@ async function boot ({ storage = {}, focused = true, current = undefined, permis
     },
     setPhase: (value) => { phase = value },
     setFocused: (value) => { focusedNow = value },
+    /** Sessions the plugin asked the workspace to open. */
+    opened,
+    /** How many times the plugin tried to raise the window. */
+    focusCalls: () => focusCalls,
     fireGesture: () => {
       for (const handler of [...gestureHandlers.pointerdown]) handler()
     },
@@ -566,6 +577,85 @@ await check('child interactions can be switched off', async () => {
   api.setChildInteractions(false)
   statusStore.set(snapshot([ 'sub1', { running: false, pendingInteraction: question('q1', 'which option?'), completionUnread: false } ]))
   assert.equal(notifications.length, 0)
+})
+
+// ---------------------------------------------------------------- clicking and retiring toasts
+
+await check('clicking a notification opens the Session it is about and raises the window', async () => {
+  const { statusStore, clock, opened, focusCalls } = await boot()
+  statusStore.set(snapshot(running('s1')))
+  statusStore.set(snapshot(idle('s1')))
+  clock.advance(SETTLE_MS)
+  assert.equal(notifications.length, 1)
+  notifications[0].onclick()
+  assert.deepEqual(opened, ['s1'], 'the toast opens the Session it reports')
+  assert.ok(focusCalls() >= 1, 'the window is asked to come forward')
+})
+
+await check('clicking an interaction notification opens its Session too', async () => {
+  const { statusStore, opened } = await boot()
+  statusStore.set(snapshot([ 's2', { running: false, pendingInteraction: question('q1', 'which one?'), completionUnread: false } ]))
+  assert.equal(notifications.length, 1)
+  notifications[0].onclick()
+  assert.deepEqual(opened, ['s2'])
+})
+
+await check('a missing workspace service does not break the click', async () => {
+  // The Session-opening service belongs to another plugin; a page without it must still be able
+  // to dismiss the toast, and the click must not throw.
+  const { statusStore, clock } = await boot({ withWorkspace: false })
+  statusStore.set(snapshot(running('s1')))
+  statusStore.set(snapshot(idle('s1')))
+  clock.advance(SETTLE_MS)
+  assert.equal(notifications.length, 1)
+  notifications[0].onclick()
+  assert.equal(notifications[0].closed, true, 'the toast is still retired')
+})
+
+await check('a manual test notification opens nothing: it names no Session', async () => {
+  const { api, opened } = await boot()
+  api.test('completion')
+  assert.equal(notifications.length, 1)
+  notifications[0].onclick()
+  assert.deepEqual(opened, [])
+})
+
+await check('typing into the Session retires its completion toast', async () => {
+  // The toast has done its job once the user is back in that Session; leaving it up keeps
+  // claiming the Session is still waiting on them.
+  const { statusStore, clock } = await boot()
+  statusStore.set(snapshot(running('s1')))
+  statusStore.set(snapshot(idle('s1')))
+  clock.advance(SETTLE_MS)
+  assert.equal(notifications.length, 1)
+  statusStore.set(snapshot(running('s1')))
+  assert.equal(notifications[0].closed, true, 'the answered toast is taken down')
+})
+
+await check('only the Session that resumed has its toast retired', async () => {
+  const { statusStore, clock } = await boot()
+  statusStore.set(snapshot(running('s1'), running('s2')))
+  statusStore.set(snapshot(idle('s1'), idle('s2')))
+  clock.advance(SETTLE_MS)
+  assert.equal(notifications.length, 2)
+  statusStore.set(snapshot(running('s1'), idle('s2')))
+  const closed = notifications.filter((item) => item.closed === true).length
+  assert.equal(closed, 1, 'the other Session keeps waiting for the user')
+})
+
+await check('retiring a toast that is not there is harmless', async () => {
+  const { statusStore } = await boot()
+  statusStore.set(snapshot(running('s1')))
+  statusStore.set(snapshot(running('s1')))
+  assert.equal(notifications.length, 0)
+})
+
+await check('an interaction toast is retired when the Session resumes after the answer', async () => {
+  const { statusStore } = await boot()
+  statusStore.set(snapshot([ 's1', { running: false, pendingInteraction: question('q1', 'well?'), completionUnread: false } ]))
+  assert.equal(notifications.length, 1)
+  statusStore.set(snapshot(running('s1')))
+  assert.equal(notifications[0].closed, true)
 })
 
 // ---------------------------------------------------------------- focus and watching

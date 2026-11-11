@@ -635,9 +635,10 @@ window.__ModuleLoader__.load({
      * @param title - notification heading.
      * @param body - notification body.
      * @param onError - called when the system refuses to display it.
+     * @param onClick - called when the user clicks the notification, to reveal the Session.
      * @returns `sent` | `unsupported` | `no-permission` | `failed`.
      */
-    function showNotification (key, title, body, onError) {
+    function showNotification (key, title, body, onError, onClick) {
       if (typeof Notification === 'undefined') return 'unsupported'
       if (Notification.permission !== 'granted') return 'no-permission'
       try {
@@ -672,15 +673,22 @@ window.__ModuleLoader__.load({
           if (typeof onError === 'function') onError()
         }
         notification.onclick = () => {
-          try {
-            window.focus()
-          } catch {
-            /* focus refusal is harmless */
-          }
+          activateWindow()
           try {
             notification.close()
           } catch {
             /* ignore */
+          }
+          if (typeof onClick === 'function') {
+            try {
+              onClick()
+            } catch (error) {
+              try {
+                console.warn('session-notifier: could not reveal the Session', error)
+              } catch {
+                /* logging is optional */
+              }
+            }
           }
         }
         return 'sent'
@@ -691,6 +699,53 @@ window.__ModuleLoader__.load({
           /* logging is optional */
         }
         return 'failed'
+      }
+    }
+
+    /**
+     * Take one notification down.
+     *
+     * A toast that has already been answered is worse than noise: it keeps claiming the Session
+     * needs the user after the user has dealt with it. `onclose` is detached first so retiring a
+     * toast on purpose cannot be mistaken for the system dismissing it.
+     * @param key - the notification key used when it was shown.
+     * @returns whether a live notification was retired.
+     */
+    function dismissNotification (key) {
+      const notification = liveNotifications.get(key)
+      if (notification === undefined) return false
+      liveNotifications.delete(key)
+      try {
+        notification.onclose = null
+        notification.close()
+      } catch {
+        /* an already-dismissed notification cannot be closed again */
+      }
+      return true
+    }
+
+    /**
+     * Bring the DSH window to the front.
+     *
+     * A page cannot raise its own OS window: Windows refuses a foreground grab from a background
+     * renderer, and the Desktop shell exposes no window-activation IPC to the page. What does work
+     * is calling `focus()` inside the notification click — Chromium reports that as user
+     * activation — and once more on the next task, after the shell has finished handling the
+     * click. Anything stronger would need the shell's cooperation.
+     */
+    function activateWindow () {
+      const attempt = () => {
+        try {
+          window.focus()
+        } catch {
+          /* a refused focus is harmless */
+        }
+      }
+      attempt()
+      try {
+        window.setTimeout(attempt, 80)
+      } catch {
+        /* no timer: the single attempt stands */
       }
     }
 
@@ -950,7 +1005,7 @@ window.__ModuleLoader__.load({
      * @param deps - live preferences and services.
      */
     function dispatchAlerts (alerts, deps) {
-      const { settings, chime, t, sessions, uiSession, diagnostics, stats } = deps
+      const { settings, chime, t, sessions, uiSession, diagnostics, stats, revealSession } = deps
       if (!settings.enabled) {
         diagnostics.record('disabled')
         return
@@ -980,6 +1035,8 @@ window.__ModuleLoader__.load({
         const key = item.alert.sessionId === undefined ? 'test' : `session-${item.alert.sessionId}`
         const result = showNotification(key, item.title, item.body, () => {
           diagnostics.record('failed')
+        }, () => {
+          if (typeof revealSession === 'function') revealSession(item.alert.sessionId)
         })
         if (result !== 'sent') outcome = result
       }
@@ -1260,10 +1317,36 @@ window.__ModuleLoader__.load({
         uiSession: scope?.uiSession ?? currentScope?.uiSession,
         diagnostics,
         stats,
+        revealSession,
       })
 
       /** Scope captured once the service injection runs; dispatch before it only serves manual tests. */
       let currentScope
+
+      /**
+       * Bring the Session a notification is about back on screen.
+       *
+       * `uiWorkspace.openSession` is the same call the sidebar makes when a user clicks a row, so
+       * this lands on the exact view they would have reached by hand. The service belongs to
+       * another plugin and may be absent (a page without the workspace plugin, or the moment
+       * before it loads), hence a lookup at click time rather than an inject edge.
+       * @param sessionId - the Session the clicked notification reports, if any.
+       */
+      function revealSession (sessionId) {
+        if (sessionId === undefined) return
+        try {
+          const workspace = typeof ctx.get === 'function' ? ctx.get('uiWorkspace') : undefined
+          if (workspace !== undefined && workspace !== null && typeof workspace.openSession === 'function') {
+            workspace.openSession(sessionId)
+          }
+        } catch (error) {
+          try {
+            console.warn('session-notifier: could not open the Session', error)
+          } catch {
+            /* logging is optional */
+          }
+        }
+      }
 
       // Resolve the rounded icon once. The embedded icon is used until it settles.
       void resolveNotificationIcon()
@@ -1462,6 +1545,14 @@ window.__ModuleLoader__.load({
           const onStatus = () => {
             const next = status.getSnapshot()
             const alerts = collectAlerts(previous, next, scope.sessions, settings.get())
+            // The user answered the notification by typing into that Session: the toast has done
+            // its job and must stop claiming the Session still needs them. `running` going back to
+            // true is that hand-over, whether the user sent a prompt or the Session resumed itself.
+            for (const [sessionId, state] of next) {
+              if (state.running === true && previous.get(sessionId)?.running !== true) {
+                dismissNotification(`session-${sessionId}`)
+              }
+            }
             previous = next
             primed = true
             const immediate = alerts.filter((alert) => alert.kind === 'interaction')
