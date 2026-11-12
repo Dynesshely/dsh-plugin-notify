@@ -1,0 +1,175 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="480" viewBox="0 0 1600 480" role="img" aria-label="session-notifier — DeepSeek Harness notification plugin">
+  <title>session-notifier — DeepSeek Harness notification plugin</title>
+
+  <defs>
+    <!-- Backdrop: deep navy, warmer at the bottom right so the poster does not read as flat black. -->
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#080A11"/>
+      <stop offset="0.55" stop-color="#0C1020"/>
+      <stop offset="1" stop-color="#131A2E"/>
+    </linearGradient>
+
+    <!-- Brand-blue bloom behind the emblem. -->
+    <radialGradient id="bloom" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#4D6BFE" stop-opacity="0.42"/>
+      <stop offset="0.55" stop-color="#3B54D6" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#4D6BFE" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Cyan counter-light, keeps the poster from being single-hue. -->
+    <radialGradient id="bloomCyan" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#22D3EE" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#22D3EE" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Emblem disc: glassy, lit from the top left. -->
+    <radialGradient id="disc" cx="0.38" cy="0.32" r="0.78">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.16"/>
+      <stop offset="0.55" stop-color="#FFFFFF" stop-opacity="0.04"/>
+      <stop offset="1" stop-color="#4D6BFE" stop-opacity="0.10"/>
+    </radialGradient>
+
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8FA5FF" stop-opacity="0.95"/>
+      <stop offset="0.5" stop-color="#4D6BFE" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#22D3EE" stop-opacity="0.65"/>
+    </linearGradient>
+
+    <!-- Waves fade out as they travel away from the bell. -->
+    <linearGradient id="wave" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#A9BBFF" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#A9BBFF" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#A9BBFF" stop-opacity="0"/>
+    </linearGradient>
+
+    <linearGradient id="wave2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#78E7F7" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#78E7F7" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#78E7F7" stop-opacity="0"/>
+    </linearGradient>
+
+    <linearGradient id="rule" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4D6BFE"/>
+      <stop offset="1" stop-color="#22D3EE" stop-opacity="0"/>
+    </linearGradient>
+
+    <linearGradient id="pill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.09"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.03"/>
+    </linearGradient>
+
+    <!-- The dot grid is drawn once and tiled; it reads as texture, not as a chart. -->
+    <pattern id="dots" width="26" height="26" patternUnits="userSpaceOnUse">
+      <circle cx="1.4" cy="1.4" r="1.1" fill="#8FA5FF" fill-opacity="0.13"/>
+    </pattern>
+
+    <!-- Soft round bell strokes. -->
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="9" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <clipPath id="canvas">
+      <rect width="1600" height="480"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#canvas)">
+    <!-- ===== backdrop ===== -->
+    <rect width="1600" height="480" fill="url(#bg)"/>
+    <rect width="1600" height="480" fill="url(#dots)" opacity="0.55"/>
+    <circle cx="360" cy="250" r="430" fill="url(#bloom)"/>
+    <circle cx="1420" cy="30" r="360" fill="url(#bloomCyan)"/>
+
+    <!-- A single hairline horizon keeps the lower third from floating. -->
+    <path d="M0 424 H1600" stroke="#8FA5FF" stroke-opacity="0.10" stroke-width="1"/>
+    <path d="M0 425 H1600" stroke="#22D3EE" stroke-opacity="0.06" stroke-width="1"/>
+
+    <!-- ===== emblem ===== -->
+    <!-- Emitted waves: three arcs opening to the right of the bell. -->
+    <path d="M430 55 A 226 226 0 0 1 430 425" fill="none" stroke="url(#wave)" stroke-width="2.6" stroke-linecap="round" opacity="0.85"/>
+    <path d="M408 86 A 188 188 0 0 1 408 394" fill="none" stroke="url(#wave)" stroke-width="2.8" stroke-linecap="round" opacity="0.95"/>
+    <path d="M386 117 A 150 150 0 0 1 386 363" fill="none" stroke="url(#wave2)" stroke-width="3.4" stroke-linecap="round"/>
+
+    <circle cx="300" cy="240" r="126" fill="url(#disc)"/>
+    <circle cx="300" cy="240" r="126" fill="none" stroke="url(#ring)" stroke-width="2"/>
+    <circle cx="300" cy="240" r="104" fill="none" stroke="#8FA5FF" stroke-opacity="0.12" stroke-width="1"/>
+
+    <!-- Bell, hand-drawn as a stroked silhouette so it stays crisp at any scale. -->
+    <g transform="translate(300 240) scale(1.85)" filter="url(#glow)">
+      <circle cx="0" cy="-30" r="4.4" fill="#E8EDFF"/>
+      <path d="M0 -24 C-12.5 -24 -21.5 -14.5 -21.5 -2 L-21.5 9.5 C-21.5 14.5 -24.5 18 -28.5 21.5 C-31.5 24.3 -29.6 29 -24.8 29 L24.8 29 C29.6 29 31.5 24.3 28.5 21.5 C24.5 18 21.5 14.5 21.5 9.5 L21.5 -2 C21.5 -14.5 12.5 -24 0 -24 Z"
+            fill="none" stroke="#E8EDFF" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>
+      <path d="M-8 34 a 8 8 0 0 0 16 0" fill="none" stroke="#E8EDFF" stroke-width="2.6" stroke-linecap="round"/>
+    </g>
+
+    <!-- Two small satellites: one carries the accent, one stays neutral. -->
+    <circle cx="470" cy="150" r="5" fill="#22D3EE" opacity="0.85"/>
+    <circle cx="166" cy="352" r="4" fill="#8FA5FF" opacity="0.55"/>
+    <path d="M498 316 l0 18 M489 325 l18 0" stroke="#22D3EE" stroke-opacity="0.45" stroke-width="1.6" stroke-linecap="round"/>
+    <path d="M124 128 l0 14 M117 135 l14 0" stroke="#8FA5FF" stroke-opacity="0.35" stroke-width="1.6" stroke-linecap="round"/>
+
+    <!-- ===== wordmark ===== -->
+    <text x="660" y="196" font-family="Segoe UI, Microsoft YaHei, system-ui, -apple-system, sans-serif"
+          font-size="64" font-weight="700" letter-spacing="-1.6" fill="#F6F8FF">session-notifier</text>
+
+    <text x="662" y="238" font-family="Segoe UI, Microsoft YaHei, system-ui, -apple-system, sans-serif"
+          font-size="21" font-weight="400" letter-spacing="0.6" fill="#8B93A7">DeepSeek Harness · 桌面通知插件</text>
+
+    <path d="M662 268 H792" stroke="url(#rule)" stroke-width="2.5" stroke-linecap="round"/>
+
+    <text x="662" y="313" font-family="Segoe UI, Microsoft YaHei, system-ui, -apple-system, sans-serif"
+          font-size="19.5" fill="#B4BCD2">会话真正需要你时才提醒：提问、审批、计划审阅，</text>
+    <text x="662" y="343" font-family="Segoe UI, Microsoft YaHei, system-ui, -apple-system, sans-serif"
+          font-size="19.5" fill="#B4BCD2">以及「确实停下来了」——而不是每一轮结束。</text>
+
+    <!-- Capability pills. -->
+    <g font-family="Segoe UI, Microsoft YaHei, system-ui, -apple-system, sans-serif" font-size="14.5" font-weight="600">
+      <rect x="662" y="372" width="112" height="34" rx="17" fill="url(#pill)" stroke="#8FA5FF" stroke-opacity="0.22"/>
+      <text x="718" y="394" text-anchor="middle" fill="#CFD8FF" letter-spacing="0.4">提示音</text>
+
+      <rect x="788" y="372" width="112" height="34" rx="17" fill="url(#pill)" stroke="#8FA5FF" stroke-opacity="0.22"/>
+      <text x="844" y="394" text-anchor="middle" fill="#CFD8FF" letter-spacing="0.4">桌面通知</text>
+
+      <rect x="914" y="372" width="150" height="34" rx="17" fill="url(#pill)" stroke="#22D3EE" stroke-opacity="0.30"/>
+      <text x="989" y="394" text-anchor="middle" fill="#B9F1FA" letter-spacing="0.4">循环静默</text>
+
+      <rect x="1078" y="372" width="122" height="34" rx="17" fill="url(#pill)" stroke="#8FA5FF" stroke-opacity="0.22"/>
+      <text x="1139" y="394" text-anchor="middle" fill="#CFD8FF" letter-spacing="0.4">点击跳转</text>
+    </g>
+
+    <!-- ===== corner marks ===== -->
+    <path d="M36 36 H84 M36 36 V84" stroke="#8FA5FF" stroke-opacity="0.35" stroke-width="1.6" stroke-linecap="round"/>
+    <path d="M1564 444 H1516 M1564 444 V396" stroke="#8FA5FF" stroke-opacity="0.35" stroke-width="1.6" stroke-linecap="round"/>
+
+    <!-- ===== a real toast, drawn with the plugin's own default strings ===== -->
+    <g>
+      <rect x="1236" y="292" width="316" height="102" rx="16" fill="#FFFFFF" fill-opacity="0.055"
+            stroke="#8FA5FF" stroke-opacity="0.22" stroke-width="1.2"/>
+      <!-- App badge -->
+      <rect x="1256" y="312" width="34" height="34" rx="10" fill="#4D6BFE" fill-opacity="0.20"
+            stroke="#8FA5FF" stroke-opacity="0.35"/>
+      <g transform="translate(1273 329) scale(0.42)">
+        <path d="M0 -24 C-12.5 -24 -21.5 -14.5 -21.5 -2 L-21.5 9.5 C-21.5 14.5 -24.5 18 -28.5 21.5 C-31.5 24.3 -29.6 29 -24.8 29 L24.8 29 C29.6 29 31.5 24.3 28.5 21.5 C24.5 18 21.5 14.5 21.5 9.5 L21.5 -2 C21.5 -14.5 12.5 -24 0 -24 Z"
+              fill="#DCE4FF" fill-opacity="0.9"/>
+      </g>
+
+      <text x="1304" y="326" font-family="Segoe UI, Microsoft YaHei, system-ui, -apple-system, sans-serif"
+            font-size="13.5" font-weight="600" fill="#E8EDFF">会话已完成</text>
+      <text x="1304" y="347" font-family="Segoe UI, Microsoft YaHei, system-ui, -apple-system, sans-serif"
+            font-size="11.5" fill="#9AA3B8">这一轮已经结束，点开查看结果。</text>
+
+      <!-- The whole row is the hit target: clicking it reveals the Session. -->
+      <text x="1304" y="371" font-family="Segoe UI, Microsoft YaHei, system-ui, -apple-system, sans-serif"
+            font-size="10.5" font-weight="600" letter-spacing="0.3" fill="#79B7FF">点击跳转到该会话 →</text>
+
+      <rect x="1510" y="312" width="26" height="16" rx="8" fill="#22D3EE" fill-opacity="0.14"/>
+      <text x="1523" y="324" text-anchor="middle"
+            font-family="Segoe UI, Microsoft YaHei, system-ui, -apple-system, sans-serif"
+            font-size="9" font-weight="600" fill="#8FE7F5">now</text>
+    </g>
+  </g>
+</svg>
