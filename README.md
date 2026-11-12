@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./docs/assets/banner.png" alt="session-notifier — DeepSeek Harness 桌面通知插件" width="100%">
+  <img src="./docs/assets/banner.png" alt="session-notifier — a desktop notification plugin for DeepSeek Harness" width="100%">
 </p>
 
 <p align="center">
@@ -13,72 +13,72 @@
 
 ## Introductions
 
-DeepSeek Harness（DSH）的通知插件：**会话真正需要你的时候**，响一声并弹一条桌面通知。
+A notification plugin for DeepSeek Harness (DSH): **when a session genuinely needs you**, it plays a chime and shows a desktop notification.
 
-难点不在弹通知，而在**判断什么时候不该弹**。一轮结束不等于轮到你：目标循环、定时任务、排队续跑都会自己开下一轮，子代理完成时真正要等的是派它出去的那个会话。照「结束就提醒」做出来的插件，会在一整段自动续跑里响个不停，最后被关掉——那等于没有。
+The hard part is not raising an alert — it is knowing when *not* to. A turn ending is not the same thing as "your turn". Goal loops, scheduled work and queued follow-ups all start the next turn by themselves, and when a subagent finishes, the conversation actually waiting on you is the one that spawned it. Plug a naive "turn ended → notify" rule into that, and it rings through an entire chain of automatic continuations until you turn it off — which is the same as having no plugin at all.
 
-所以这里做的是一套判定表：
+So the plugin runs a decision table:
 
-| 你的会话发生了什么 | 提醒 |
+| What happened in your session | What you get |
 | --- | --- |
-| 提问、审批、计划审阅 | **立刻提醒**（它此刻就是在等你，不需要观望） |
-| 一轮结束、确实停下来了 | 等 **1.2s** 静默期；会话带着进行中的目标则等 **15s** |
-| 循环 / 目标轮次续跑 | **静默**：静默期内又跑起来就丢弃 |
-| 子代理（含 Agent Teams 队友）自己的会话完成 | **默认静默**（主会话会汇报结果，可开） |
-| 子代理停下来提问或要审批 | **提醒**（只有你能推动它，标为「子代理 xxx」） |
-| 你正在盯着那个会话（窗口聚焦 + 在主视图） | **跳过**（判定在投递那一刻求值，不是候选登记时） |
-| 你回到会话继续输入了 | 那条旧通知**自动撤下**——它已经过期了 |
+| A question, an approval request, a plan review | **Notify immediately** (it is asking; there is nothing to wait for) |
+| A turn ended and the session really stopped | Wait out a **1.2 s** quiet window; **15 s** if the session carries an active goal |
+| A loop / goal round continued on its own | **Silent**: a resumption inside the window discards the candidate |
+| A subagent (including an Agent Teams teammate) finished | **Silent by default** (the parent reports the outcome; can be enabled) |
+| A subagent stopped to ask or request approval | **Notify** (only you can move it; labelled `Subagent <name>`) |
+| You are already looking at that session (window focused + in the main view) | **Skip** (evaluated at delivery time, not when the candidate is registered) |
+| You went back and typed into the session | Its stale notification is **retired** automatically |
 
-两个静默窗口不是拍脑袋定的：从本机约 500 个 DSH 会话日志里按「谁唤醒了下一轮」分组量过，目标轮次续跑 **p99 ≈ 375ms**（1.2 秒窗口能 100% 吸收），而人类接手的间隔中位数约 **6 分钟**——差两三个数量级，所以这件事可以判定，不需要猜。复算脚本在 [`tools/probe-round-cadence.mjs`](./session-notifier/tools/probe-round-cadence.mjs)，可在这台机器上重跑。
+The two quiet windows are measured, not guessed. Grouping the local DSH session logs by *what woke the next turn* shows goal rounds resuming at **p99 ≈ 375 ms** (the 1.2 s window absorbs 100% of them), while human hand-over sits at a **median around 6 minutes** — two to three orders of magnitude apart, so this can be decided rather than predicted. The script that recomputes it is [`tools/probe-round-cadence.mjs`](./session-notifier/tools/probe-round-cadence.mjs), and you can run it on your own machine.
 
-提醒方式两路独立：**Web Audio 实时合成的提示音**（交互与完成是不同的两声，900ms 冷却）和**桌面通知**（Windows 上有个坑：toast `tag` 超过 16 字符会被系统静默拒绝，所以 tag 做了短化）。
+Two delivery channels are independent of each other: a **Web Audio chime synthesised at runtime** (different two-note patterns for interactions and completions, 900 ms cooldown) and a **desktop notification**. On Windows there is a gotcha worth knowing: a toast `tag` longer than 16 characters makes the system reject the toast silently, so tags are shortened and made unique.
 
-> **为什么仓库里只有一个插件。** 这里曾经按「桌面端 / 服务端」维护两个实现。扫描后确认两端没有平台级差异——Host 半边都是空实现，注入同一批 Client 服务，用同一套 Web Audio + Notification 投递，桌面端唯一的 Electron 特征只是诊断文案。双线维护只会带来行为漂移和同一个 bug 修两次，所以合并成了根目录下的 `session-notifier/`。`clients/desktop` 与 `clients/server` 两条分支保留为历史归档，不再更新。
+> **Why the repo holds a single plugin.** This used to be maintained as two implementations, one per "desktop / server" line. Auditing both showed there is no platform-level difference — the Host half is an empty stub in both, they inject the same set of Client services, and both deliver through the same Web Audio + Notification path; the only Electron-specific feature was a line of diagnostic copy. Dual maintenance only bought behaviour drift and the same bug fixed twice, so they were merged into the single `session-notifier/` at the repo root. The `clients/desktop` and `clients/server` branches remain as historical archives and are no longer updated.
 
-即时生效：插件是纯客户端半边（Host 半边为空），改完**刷新页面**即可，不需要重启 DSH。
+Changes take effect immediately: the plugin is a pure client half (the Host half is empty), so editing it only needs a **page refresh** — no DSH restart.
 
 ## How to Install
 
-需要 DSH **Desktop**；插件平台声明是 `web`，跟着桌面版的页面走。
+Requires **DSH Desktop**; the plugin declares the `web` platform and rides along with the desktop app's page.
 
-用 DSH 的插件管理器安装，参数是这个目录的绝对路径：
+Install it through DSH's plugin manager, pointing at the absolute path of that directory:
 
 ```text
-plugin_manager install_bundle  ->  <仓库路径>/session-notifier
+plugin_manager install_bundle  ->  <repo path>/session-notifier
 plugin_manager remove_bundle   ->  dsh-session-notifier
 ```
 
-想让源码改动即时生效，用 `link:` 方式安装（DSH 会把它链进 profile 的 `node_modules`），之后改 `client.js` **刷新页面**就生效。
+To make source edits take effect immediately, install with `link:` (DSH then symlinks it into the profile's `node_modules`), after which editing `client.js` only needs a **page refresh**.
 
-装好后在 **设置 → 会话提醒** 里见到配置页（同一页面也注册在 **设置 → 插件 → 会话提醒** 页签）：
+Once installed, find the settings page under **Settings → Session reminders** (it is also registered as a tab under **Settings → Plugins → Session reminders**):
 
-- **提醒方式**：总开关、提示音、桌面通知
-- **提醒范围**：正在查看的会话不提醒 / 子会话完成也提醒 / 子会话交互也提醒
-- **标题模板**：问题、计划评审、审批、完成四类，`{session}` 替换为会话名，留空用默认文案
-- **测试与状态**：立即测试、10 秒后测试、权限状态、上次提醒与诊断
+- **Channels**: master switch, sound, desktop notification
+- **Scope**: stay quiet for the session on screen / also remind when a subagent finishes / also remind when a subagent needs you
+- **Title templates**: question, plan review, approval and completion; `{session}` is replaced with the session name, and an empty template falls back to the built-in copy
+- **Test and status**: test now, test after 10 seconds, permission state, last alert and diagnostics
 
-插件**零运行时依赖**，没有构建步骤，也不需要 `npm install`。
+The plugin has **zero runtime dependencies**, no build step, and needs no `npm install`.
 
 ## How to Contribute
 
 ```bash
-# 只需要 Node >= 20，无第三方依赖
-node session-notifier/tools/test-session-notifier.mjs   # 行为测试，68 项
-cd session-notifier && npm run check                    # 五个文件的语法检查
+# Only Node >= 20 is required; there are no third-party dependencies
+node session-notifier/tools/test-session-notifier.mjs   # behavioural tests, 68 checks
+cd session-notifier && npm run check                    # syntax check across five files
 ```
 
-测试是**受控时钟**驱动的：完成类提醒被延迟到会话证明自己停下来之后，不控制时间就没法验证「按住看后续」这件事。新增判定规则时，请把用例加进同一张表，而不是写一个只测实现细节的断言。
+The tests run on a **controlled clock**: completion alerts are deferred until a session proves it stopped, and without controlling time you cannot verify "hold the candidate and watch what happens next". When you add a decision rule, add its cases to that same table instead of asserting on implementation details.
 
-提交前请确认：
+Before you open a PR, please make sure:
 
-1. **行为测试全绿**，新行为有自己的用例
-2. **别手搓库里已经有的东西**（提示音、markdown、图标都有成熟实现）
-3. **改判定条件必须给依据**——阈值、窗口、信号来源都要说清为什么是这个值，能实测的就实测
-4. 提交信息用中文 conventional commits（`type(scope): 中文标题`），正文写**动机与取舍**，不只是改了什么
+1. **The behavioural tests pass**, and the new behaviour has its own checks
+2. **Do not hand-roll what a mature library already does** (chimes, markdown, icons all have solid implementations)
+3. **Any change to a decision condition comes with evidence** — justify the threshold, the window and the signal source, and measure it where you can
+4. Commit messages follow conventional commits; this repository writes the subject in Chinese, with a body that explains **motivation and trade-offs**, not just what changed
 
-流程：fork → 从 `main` 建分支 → 提交 → 开 PR。行为变更请在 PR 里说明「改之前会怎样、改之后会怎样」，以及你是怎么验证的。
+Flow: fork → branch from `main` → commit → open a PR. For behaviour changes, describe what happened before, what happens now, and how you verified it.
 
-插件自身的实现细节（触发信号来源、设置迁移、降级策略、验证边界）在 [`session-notifier/README.md`](./session-notifier/README.md)。
+Implementation details (signal sources, settings migration, degradation paths, verification boundaries) live in [`session-notifier/README.md`](./session-notifier/README.md).
 
 ## Structure
 
@@ -86,24 +86,24 @@ cd session-notifier && npm run check                    # 五个文件的语法�
 dsh-plugin-notify/
 ├── docs/
 │   └── assets/
-│       ├── banner.svg          # 顶部海报的源文件（自绘 SVG）
-│       └── banner.png          # 由该 SVG 渲染，README 实际引用的是这张
-├── session-notifier/           # 唯一维护的插件
-│   ├── package.json            # bundle 清单：dsh.bundle.patch + dsh.client
-│   ├── cordis.patch.yml        # 向 profile 插入插件行
-│   ├── index.js                # Host 半边，空实现（判定全在页面里）
-│   ├── client.js               # 浏览器半边：判定、提示音、桌面通知、设置页、控制台 API
-│   ├── locale/{zh,en}.json     # 插件管理页的标题与描述
+│       ├── banner.svg          # source of the poster above (hand-drawn SVG)
+│       └── banner.png          # rendered from that SVG; this is what the README uses
+├── session-notifier/           # the single maintained plugin
+│   ├── package.json            # bundle manifest: dsh.bundle.patch + dsh.client
+│   ├── cordis.patch.yml        # inserts the plugin row into a profile
+│   ├── index.js                # Host half, empty stub (all decisions happen in the page)
+│   ├── client.js               # browser half: decisions, chime, toasts, settings page, console API
+│   ├── locale/{zh,en}.json     # title and description shown by the plugin manager
 │   ├── tools/
-│   │   ├── test-session-notifier.mjs    # 受控时钟的行为测试（68 项）
-│   │   ├── probe-round-cadence.mjs      # 复核 1.2s / 15s 阈值的实测脚本
-│   │   └── lib/session-log.mjs          # 会话日志分帧解压（每行一个独立 zstd 帧）
-│   └── README.md               # 触发条件、设置、迁移、验证
+│   │   ├── test-session-notifier.mjs    # behavioural tests on a controlled clock (68 checks)
+│   │   ├── probe-round-cadence.mjs      # recomputes the 1.2 s / 15 s thresholds
+│   │   └── lib/session-log.mjs          # frame-splits session logs (one zstd frame per line)
+│   └── README.md               # triggers, settings, migration, verification
 ├── LICENSE
 └── README.md
 ```
 
-`clients/desktop` 与 `clients/server` 两条分支是合并前的历史归档，**新代码只进 `main`**。
+The `clients/desktop` and `clients/server` branches are pre-merge archives; **new code only lands on `main`**.
 
 ## Star History (Dark Mode)
 
