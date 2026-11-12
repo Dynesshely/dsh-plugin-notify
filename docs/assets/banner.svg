@@ -116,29 +116,29 @@
     <text x="660" y="196" font-family="Segoe UI, Microsoft YaHei, system-ui, -apple-system, sans-serif"
           font-size="64" font-weight="700" letter-spacing="-1.6" fill="#F6F8FF">session-notifier</text>
 
-    <text x="662" y="238" font-family="Segoe UI, Microsoft YaHei, system-ui, -apple-system, sans-serif"
-          font-size="21" font-weight="400" letter-spacing="0.6" fill="#8B93A7">DeepSeek Harness · 桌面通知插件</text>
+    <text x="662" y="238" font-family="Segoe UI, system-ui, -apple-system, sans-serif"
+          font-size="21" font-weight="400" letter-spacing="0.2" fill="#8B93A7">DeepSeek Harness · desktop notification plugin</text>
 
     <path d="M662 268 H792" stroke="url(#rule)" stroke-width="2.5" stroke-linecap="round"/>
 
-    <text x="662" y="313" font-family="Segoe UI, Microsoft YaHei, system-ui, -apple-system, sans-serif"
-          font-size="19.5" fill="#B4BCD2">会话真正需要你时才提醒：提问、审批、计划审阅，</text>
-    <text x="662" y="343" font-family="Segoe UI, Microsoft YaHei, system-ui, -apple-system, sans-serif"
-          font-size="19.5" fill="#B4BCD2">以及「确实停下来了」——而不是每一轮结束。</text>
+    <text x="662" y="313" font-family="Segoe UI, system-ui, -apple-system, sans-serif"
+          font-size="19.5" fill="#B4BCD2">Speaks up only when a session truly needs you:</text>
+    <text x="662" y="343" font-family="Segoe UI, system-ui, -apple-system, sans-serif"
+          font-size="19.5" fill="#B4BCD2">questions, approvals, plan reviews — and a real stop.</text>
 
     <!-- Capability pills. -->
-    <g font-family="Segoe UI, Microsoft YaHei, system-ui, -apple-system, sans-serif" font-size="14.5" font-weight="600">
-      <rect x="662" y="372" width="112" height="34" rx="17" fill="url(#pill)" stroke="#8FA5FF" stroke-opacity="0.22"/>
-      <text x="718" y="394" text-anchor="middle" fill="#CFD8FF" letter-spacing="0.4">提示音</text>
+    <g font-family="Segoe UI, system-ui, -apple-system, sans-serif" font-size="14.5" font-weight="600">
+      <rect x="662" y="372" width="82" height="34" rx="17" fill="url(#pill)" stroke="#8FA5FF" stroke-opacity="0.22"/>
+      <text x="703" y="394" text-anchor="middle" fill="#CFD8FF" letter-spacing="0.2">Chime</text>
 
-      <rect x="788" y="372" width="112" height="34" rx="17" fill="url(#pill)" stroke="#8FA5FF" stroke-opacity="0.22"/>
-      <text x="844" y="394" text-anchor="middle" fill="#CFD8FF" letter-spacing="0.4">桌面通知</text>
+      <rect x="758" y="372" width="132" height="34" rx="17" fill="url(#pill)" stroke="#8FA5FF" stroke-opacity="0.22"/>
+      <text x="824" y="394" text-anchor="middle" fill="#CFD8FF" letter-spacing="0.2">Desktop toast</text>
 
-      <rect x="914" y="372" width="150" height="34" rx="17" fill="url(#pill)" stroke="#22D3EE" stroke-opacity="0.30"/>
-      <text x="989" y="394" text-anchor="middle" fill="#B9F1FA" letter-spacing="0.4">循环静默</text>
+      <rect x="904" y="372" width="124" height="34" rx="17" fill="url(#pill)" stroke="#22D3EE" stroke-opacity="0.30"/>
+      <text x="966" y="394" text-anchor="middle" fill="#B9F1FA" letter-spacing="0.2">Smart gating</text>
 
-      <rect x="1078" y="372" width="122" height="34" rx="17" fill="url(#pill)" stroke="#8FA5FF" stroke-opacity="0.22"/>
-      <text x="1139" y="394" text-anchor="middle" fill="#CFD8FF" letter-spacing="0.4">点击跳转</text>
+      <rect x="1042" y="372" width="128" height="34" rx="17" fill="url(#pill)" stroke="#8FA5FF" stroke-opacity="0.22"/>
+      <text x="1106" y="394" text-anchor="middle" fill="#CFD8FF" letter-spacing="0.2">Click to open</text>
     </g>
 
     <!-- ===== corner marks ===== -->
@@ -157,18 +157,18 @@
               fill="#DCE4FF" fill-opacity="0.9"/>
       </g>
 
-      <text x="1304" y="326" font-family="Segoe UI, Microsoft YaHei, system-ui, -apple-system, sans-serif"
-            font-size="13.5" font-weight="600" fill="#E8EDFF">会话已完成</text>
-      <text x="1304" y="347" font-family="Segoe UI, Microsoft YaHei, system-ui, -apple-system, sans-serif"
-            font-size="11.5" fill="#9AA3B8">这一轮已经结束，点开查看结果。</text>
+      <text x="1304" y="326" font-family="Segoe UI, system-ui, -apple-system, sans-serif"
+            font-size="13.5" font-weight="600" fill="#E8EDFF">Session finished</text>
+      <text x="1304" y="347" font-family="Segoe UI, system-ui, -apple-system, sans-serif"
+            font-size="11.5" fill="#9AA3B8">Turn finished — open it to see the result.</text>
 
       <!-- The whole row is the hit target: clicking it reveals the Session. -->
-      <text x="1304" y="371" font-family="Segoe UI, Microsoft YaHei, system-ui, -apple-system, sans-serif"
-            font-size="10.5" font-weight="600" letter-spacing="0.3" fill="#79B7FF">点击跳转到该会话 →</text>
+      <text x="1304" y="371" font-family="Segoe UI, system-ui, -apple-system, sans-serif"
+            font-size="10.5" font-weight="600" letter-spacing="0.2" fill="#79B7FF">Click to open this session →</text>
 
       <rect x="1510" y="312" width="26" height="16" rx="8" fill="#22D3EE" fill-opacity="0.14"/>
       <text x="1523" y="324" text-anchor="middle"
-            font-family="Segoe UI, Microsoft YaHei, system-ui, -apple-system, sans-serif"
+            font-family="Segoe UI, system-ui, -apple-system, sans-serif"
             font-size="9" font-weight="600" fill="#8FE7F5">now</text>
     </g>
   </g>
