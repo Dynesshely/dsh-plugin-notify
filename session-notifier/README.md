@@ -39,7 +39,12 @@ DSH Web 插件：当**某个会话需要你介入**，或**它真的停下来等
    - **图标**：内嵌 DSH 应用图标（PNG），激活时用 canvas 重绘成 128×128 **圆角** PNG，不依赖页面资源路由。
    - **Windows 兼容**：每条通知使用**唯一且不超过 16 字符**的 tag（Windows 对超长 tag 会直接拒绝，渲染进程看不到失败）；同一会话的上一条通知会先 `close()`，避免「同 tag 静默替换、不弹横幅」。
    - `requireInteraction` 让横幅停留。
-   - **点击通知**会切到它所属的会话：调用 `uiWorkspace.openSession(sessionId)` —— 和你在侧栏点一行是同一个入口，所以落到的是你会手动打开的那个视图。同时尝试把窗口带到前台：`focus()` 在点击回调里调一次（Chromium 把通知点击算作用户激活），80ms 后再补一次。**如实说明能力边界**：页面无法真正把操作系统窗口提到最前，Windows 会拒绝后台渲染进程的前台抢占，DSH 桌面外壳目前也没有向页面暴露窗口激活的 IPC。所以窗口最小化或被别的应用盖住时，可能只切了视图却没有跳出来；这一条要外壳配合才能彻底解决。`uiWorkspace` 属于别的插件，因此在点击那一刻用 `ctx.get('uiWorkspace')` 查找而不是加 inject 依赖——查不到就只关通知，不报错。
+    - **点击通知**会切到它所属的会话：调用 `uiWorkspace.openSession(sessionId)` —— 和你在侧栏点一行是同一个入口，所以落到的是你会手动打开的那个视图。`uiWorkspace` 属于别的插件，因此在点击那一刻用 `ctx.get('uiWorkspace')` 查找而不是加 inject 依赖——查不到就只关通知，不报错。
+    - **把窗口提到前台**分两步：页面里 `focus()` 一次 + 80ms 后再补一次（Chromium 把通知点击算作用户激活）；**Windows 上还会请宿主半边做一次「置顶 + 立刻取消置顶」**。
+      - 为什么需要宿主：页面抬不动自己所在的系统窗口——Windows 拒绝后台渲染进程的前台抢占，而桌面外壳没有向页面暴露窗口激活 IPC。宿主跑在外壳的子进程里，`process.ppid` 就是持有窗口的那个进程，所以它能精确地对这一实例的窗口做 Win32 调用，不会误抬同一台机器上的其他 DSH。
+      - 具体序列：`SetWindowPos(HWND_TOPMOST)` → 合成一次裸 Alt 按键（把前台权限交出来）→ `BringWindowToTop` + `SetForegroundWindow` → 失败再走 `AttachThreadInput` 兜底 → `SetWindowPos(HWND_NOTOPMOST, SWP_NOACTIVATE)` 释放置顶。最后用 `GetForegroundWindow()` 自证，`exit 0` 才算真的到了前台。
+      - 代价与边界：这次抬窗要起一个 PowerShell（约 0.5s），所以是 fire-and-forget，不阻塞点击；跨进程/跨虚拟桌面、锁屏时仍然可能失败，失败就只是没抬起窗口，不影响换会话。
+      - 其他平台不注册这条路由，只走页面自己的 `focus()`，行为与之前一致。
    - **你回到该会话继续输入时，那条通知会自动消失**：`running` 从 false 变回 true 就说明你已经接管了（无论是你发了新 prompt，还是循环自己续跑），那条 toast 不该再宣称「等你处理」。只关该会话自己的那条，其它会话的提醒照常留着。
    - 权限在第一次用户手势时**只申请一次**；拒绝后仅保留提示音，设置页会说明原因。
 
@@ -56,8 +61,10 @@ DSH Web 插件：当**某个会话需要你介入**，或**它真的停下来等
 - **测试与状态**：
   - 「测试：需要你介入」「测试：会话已完成」立刻走真实投递链路；
   - 「10 秒后测试」用于切到别的窗口后验证失焦投递；
+  - 「测试抬窗」直接走一遍宿主抬窗链路（不经过通知），用来单独验证客户端 → 宿主的通路；
   - 「允许桌面通知」手动申请权限；
   - 状态行显示通知权限、音频、圆角图标、已提醒次数、最近一次提醒的结果与发送时窗口状态；
+  - 状态行末尾的 `抬窗` 是最近一次抬窗的结果：`raised` 表示宿主接受了请求，`not-windows` / `no-fetch` / `http-4xx` / `failed` 各自指向不同故障面；
   - 「恢复默认」清空所有自定义。
 
 设置保存在 `localStorage` 的 `dsh.session-notifier.v2`，刷新后保留。首次加载会自动迁移两个旧插件的键：
@@ -98,11 +105,14 @@ plugin_manager remove_bundle   ->  dsh-session-notifier
 
 新安装或源码更新后**刷新一次页面**才会加载（长驻页面不保证应用实时 graph 帧）。以 `link:` 方式安装时，刷新页面即生效。
 
+> **改了 `index.js`（宿主半边）需要重启 DSH。** 宿主模块在进程启动时求值一次，DSH 的 HMR 只监听 profile 配置、不监听插件源码；刷新页面只换浏览器半边。
+
 ## 验证
 
 ```bash
-node session-notifier/tools/test-session-notifier.mjs   # 60 项断言
-npm run check                                          # 语法检查
+node session-notifier/tools/test-session-notifier.mjs        # 浏览器半边，71 项
+node session-notifier/tools/test-session-notifier-host.mjs   # 宿主半边，13 项
+npm run check                                               # 语法检查
 ```
 
 测试用受控时钟加载真实 `client.js`，覆盖：完成候选的 settle/goal quiet/轮次推进丢弃、交互立即提醒与按 key 去重、子会话两种标记（`origin`/`parentId`）的完成与交互策略、聚焦/主视图跳过（投递时求值）、重连基线门禁、首次快照静默、提示音冷却与批量上限、Windows 安全 tag/关闭旧通知/圆角图标/`requireInteraction`、点击通知打开对应会话（含 `uiWorkspace` 缺席与无会话的手动测试）、用户接管后撤下旧通知（只撤该会话那条）、权限与不支持环境的降级、设置持久化与两个旧键的迁移、标题模板、设置页结构、控制台 API、dispose。

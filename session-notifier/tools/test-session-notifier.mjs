@@ -151,7 +151,7 @@ const withGoal = (row, phase, rounds) => ({
 })
 
 /** Boot one isolated plugin instance. */
-async function boot ({ storage = {}, focused = true, current = undefined, permission = 'granted', initialStatus = undefined, notificationApi = true, withWorkspace = true } = {}) {
+async function boot ({ storage = {}, focused = true, current = undefined, permission = 'granted', initialStatus = undefined, notificationApi = true, withWorkspace = true, userAgent = 'test-browser', raiseRejects = false } = {}) {
   notifications.length = 0
   audioContexts = []
   permissionRequests = 0
@@ -204,7 +204,13 @@ async function boot ({ storage = {}, focused = true, current = undefined, permis
   }
   if (notificationApi) globalThis.Notification = FakeNotification
   else delete globalThis.Notification
-  Object.defineProperty(globalThis, 'navigator', { value: { userAgent: 'test-browser' }, configurable: true, writable: true })
+  Object.defineProperty(globalThis, 'navigator', { value: { userAgent }, configurable: true, writable: true })
+  /** Every request the plugin made to the Host half. */
+  const raised = []
+  globalThis.fetch = (url, init) => {
+    raised.push({ url, init })
+    return raiseRejects ? Promise.reject(new Error('offline')) : Promise.resolve({ ok: true })
+  }
   globalThis.Image = class {
     set src (value) { this.value = value }
     decode () { return Promise.resolve() }
@@ -315,6 +321,8 @@ async function boot ({ storage = {}, focused = true, current = undefined, permis
     opened,
     /** How many times the plugin tried to raise the window. */
     focusCalls: () => focusCalls,
+    /** Requests the plugin sent to the Host half's window-raise route. */
+    raised,
     fireGesture: () => {
       for (const handler of [...gestureHandlers.pointerdown]) handler()
     },
@@ -612,6 +620,38 @@ await check('a missing workspace service does not break the click', async () => 
   assert.equal(notifications[0].closed, true, 'the toast is still retired')
 })
 
+await check('on Windows the click asks the Host half to toggle the window on top', async () => {
+  // `window.focus()` is refused for a background renderer, so the page hands the
+  // job to the Host half, which owns the Win32 call.
+  const { statusStore, clock, raised } = await boot({ userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' })
+  statusStore.set(snapshot(running('s1')))
+  statusStore.set(snapshot(idle('s1')))
+  clock.advance(SETTLE_MS)
+  assert.equal(notifications.length, 1)
+  notifications[0].onclick()
+  assert.equal(raised.length, 1, 'exactly one raise request')
+  assert.equal(raised[0].url, '/plugin/session-notifier/raise-window')
+  assert.equal(raised[0].init.method, 'POST')
+})
+
+await check('on any other platform the click never asks the Host half', async () => {
+  const { statusStore, clock, raised } = await boot({ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)' })
+  statusStore.set(snapshot(running('s1')))
+  statusStore.set(snapshot(idle('s1')))
+  clock.advance(SETTLE_MS)
+  notifications[0].onclick()
+  assert.deepEqual(raised, [])
+})
+
+await check('a refused raise request does not break the click', async () => {
+  const { statusStore, clock, opened } = await boot({ userAgent: 'Mozilla/5.0 (Windows NT 10.0)', raiseRejects: true })
+  statusStore.set(snapshot(running('s1')))
+  statusStore.set(snapshot(idle('s1')))
+  clock.advance(SETTLE_MS)
+  notifications[0].onclick()
+  await new Promise((resolve) => realSetTimeout(resolve, 0))
+  assert.deepEqual(opened, ['s1'], 'the Session still opens')
+})
 await check('a manual test notification opens nothing: it names no Session', async () => {
   const { api, opened } = await boot()
   api.test('completion')
@@ -965,7 +1005,7 @@ await check('the Settings page renders every switch, template input and action',
   walk(tree)
   assert.equal(switches.length, 6)
   assert.equal(inputs.length, 4)
-  assert.equal(buttons.length, 5)
+  assert.equal(buttons.length, 6)  // reset, test, test-done, test-delay, test-raise, allow
   assert.deepEqual(inputs.map((input) => input.props.placeholder), [
     'title.question',
     'title.planReview',

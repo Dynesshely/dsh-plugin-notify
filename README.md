@@ -6,7 +6,7 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-4D6BFE?style=flat-square" alt="License: MIT"></a>
   <a href="https://github.com/Dynesshely/dsh-plugin-notify"><img src="https://img.shields.io/badge/DSH-plugin-4D6BFE?style=flat-square" alt="DSH plugin"></a>
   <img src="https://img.shields.io/badge/version-1.0.0-22d3ee?style=flat-square" alt="Version 1.0.0">
-  <img src="https://img.shields.io/badge/tests-68%20passing-10b981?style=flat-square" alt="68 tests passing">
+  <img src="https://img.shields.io/badge/tests-84%20passing-10b981?style=flat-square" alt="84 tests passing">
   <img src="https://img.shields.io/badge/node-%3E%3D20-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node >= 20">
   <a href="https://github.com/Dynesshely/dsh-plugin-notify/pulls"><img src="https://img.shields.io/badge/PRs-welcome-8b5cf6?style=flat-square" alt="PRs welcome"></a>
 </p>
@@ -28,10 +28,13 @@ So the plugin runs a decision table:
 | A subagent stopped to ask or request approval | **Notify** (only you can move it; labelled `Subagent <name>`) |
 | You are already looking at that session (window focused + in the main view) | **Skip** (evaluated at delivery time, not when the candidate is registered) |
 | You went back and typed into the session | Its stale notification is **retired** automatically |
+| You clicked a notification | The session opens; on Windows the window is also brought to the front |
 
 The two quiet windows are measured, not guessed. Grouping the local DSH session logs by *what woke the next turn* shows goal rounds resuming at **p99 ≈ 375 ms** (the 1.2 s window absorbs 100% of them), while human hand-over sits at a **median around 6 minutes** — two to three orders of magnitude apart, so this can be decided rather than predicted. The script that recomputes it is [`tools/probe-round-cadence.mjs`](./session-notifier/tools/probe-round-cadence.mjs), and you can run it on your own machine.
 
 Two delivery channels are independent of each other: a **Web Audio chime synthesised at runtime** (different two-note patterns for interactions and completions, 900 ms cooldown) and a **desktop notification**. On Windows there is a gotcha worth knowing: a toast `tag` longer than 16 characters makes the system reject the toast silently, so tags are shortened and made unique.
+
+Clicking a notification switches to its session and, **on Windows**, also brings the window to the front. A page cannot do that itself — Windows refuses a foreground grab from a background renderer — so the browser half asks the Host half, which makes the window briefly topmost and immediately releases it again; Windows honours that where it refuses a plain focus. Every other platform relies on the page's own `focus()` and keeps working exactly as before.
 
 > **Why the repo holds a single plugin.** This used to be maintained as two implementations, one per "desktop / server" line. Auditing both showed there is no platform-level difference — the Host half is an empty stub in both, they inject the same set of Client services, and both deliver through the same Web Audio + Notification path; the only Electron-specific feature was a line of diagnostic copy. Dual maintenance only bought behaviour drift and the same bug fixed twice, so they were merged into the single `session-notifier/` at the repo root. The `clients/desktop` and `clients/server` branches remain as historical archives and are no longer updated.
 
@@ -63,7 +66,8 @@ The plugin has **zero runtime dependencies**, no build step, and needs no `npm i
 
 ```bash
 # Only Node >= 20 is required; there are no third-party dependencies
-node session-notifier/tools/test-session-notifier.mjs   # behavioural tests, 68 checks
+node session-notifier/tools/test-session-notifier.mjs   # behavioural tests, 71 checks
+node session-notifier/tools/test-session-notifier-host.mjs   # Host half, 13 checks
 cd session-notifier && npm run check                    # syntax check across five files
 ```
 
@@ -91,11 +95,12 @@ dsh-plugin-notify/
 ├── session-notifier/           # the single maintained plugin
 │   ├── package.json            # bundle manifest: dsh.bundle.patch + dsh.client
 │   ├── cordis.patch.yml        # inserts the plugin row into a profile
-│   ├── index.js                # Host half, empty stub (all decisions happen in the page)
+│   ├── index.js                # Host half: the Windows window-raise route (nothing else)
 │   ├── client.js               # browser half: decisions, chime, toasts, settings page, console API
 │   ├── locale/{zh,en}.json     # title and description shown by the plugin manager
 │   ├── tools/
-│   │   ├── test-session-notifier.mjs    # behavioural tests on a controlled clock (68 checks)
+│   │   ├── test-session-notifier.mjs    # behavioural tests on a controlled clock (71 checks)
+│   │   ├── test-session-notifier-host.mjs # Host half: route contract and the generated Win32 script (13 checks)
 │   │   ├── probe-round-cadence.mjs      # recomputes the 1.2 s / 15 s thresholds
 │   │   └── lib/session-log.mjs          # frame-splits session logs (one zstd frame per line)
 │   └── README.md               # triggers, settings, migration, verification

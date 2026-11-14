@@ -94,6 +94,9 @@ window.__ModuleLoader__.load({
     /** Request identity fallback when a pending interaction carries no key. */
     const NO_KEY = {}
 
+    /** Host route that performs the Windows topmost toggle (served by `index.js`). */
+    const RAISE_ROUTE = '/plugin/session-notifier/raise-window'
+
     /** Embedded DSH application icon (96×96 PNG); the notification icon is redrawn from it. */
     const ICON_DATA_URL = 'data:image/png;base64,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'
     /** Notification icon size and corner radius, in pixels. */
@@ -136,6 +139,7 @@ window.__ModuleLoader__.load({
         'action.test': '测试：需要你介入',
         'action.testDone': '测试：会话已完成',
         'action.testDelay': '10 秒后测试',
+        'action.raise': '测试抬窗',
         'action.allow': '允许桌面通知',
         'status.environment': '环境',
         'status.environment.electron': 'DSH 桌面应用',
@@ -145,6 +149,7 @@ window.__ModuleLoader__.load({
         'status.icon': '图标',
         'status.fired': '已提醒',
         'status.last': '最近一次',
+        'status.raise': '抬窗',
         'status.none': '还没有',
         'status.saved': '设置自动保存在本浏览器，刷新后仍然有效。',
         'result.disabled': '提醒已关闭',
@@ -193,6 +198,7 @@ window.__ModuleLoader__.load({
         'action.test': 'Test: you are needed',
         'action.testDone': 'Test: session finished',
         'action.testDelay': 'Test in 10s',
+        'action.raise': 'Test window raise',
         'action.allow': 'Allow notifications',
         'status.environment': 'Environment',
         'status.environment.electron': 'DSH desktop app',
@@ -202,6 +208,7 @@ window.__ModuleLoader__.load({
         'status.icon': 'icon',
         'status.fired': 'fired',
         'status.last': 'last',
+        'status.raise': 'window raise',
         'status.none': 'none yet',
         'status.saved': 'Settings are saved in this browser and survive a refresh.',
         'result.disabled': 'reminders are off',
@@ -728,10 +735,14 @@ window.__ModuleLoader__.load({
      * Bring the DSH window to the front.
      *
      * A page cannot raise its own OS window: Windows refuses a foreground grab from a background
-     * renderer, and the Desktop shell exposes no window-activation IPC to the page. What does work
-     * is calling `focus()` inside the notification click — Chromium reports that as user
-     * activation — and once more on the next task, after the shell has finished handling the
-     * click. Anything stronger would need the shell's cooperation.
+     * renderer, and the Desktop shell exposes no window-activation IPC to the page. Two things are
+     * tried, cheapest first:
+     *
+     *   - `focus()` inside the notification click — Chromium reports that as user activation —
+     *     and once more on the next task, after the shell has finished handling the click;
+     *   - on Windows, a request to the Host half, which does the topmost-toggle that Windows
+     *     actually honours (see `index.js`). That costs a PowerShell start, so it is fire-and-
+     *     forget and never delays the click.
      */
     function activateWindow () {
       const attempt = () => {
@@ -746,6 +757,64 @@ window.__ModuleLoader__.load({
         window.setTimeout(attempt, 80)
       } catch {
         /* no timer: the single attempt stands */
+      }
+      requestWindowRaise()
+    }
+
+    /** Last window-raise attempt, surfaced through the console probe. */
+    let windowRaise = { at: undefined, outcome: 'idle' }
+    /** @returns whether this page runs on Windows, where the Host can raise the window. */
+    function isWindowsPlatform () {
+      try {
+        return typeof navigator === 'object' && navigator !== null && /Windows/u.test(String(navigator.userAgent))
+      } catch {
+        return false
+      }
+    }
+
+    /**
+     * Ask the Host half to toggle the shell window to topmost and back.
+     *
+     * The Host owns the route because only a process that may call Win32 can do this; the page
+     * reaches it through the same origin it was loaded from (in the desktop shell, `dsh-app://app`
+     * forwards unknown paths to the Host server). A failure is not worth reporting: the focus
+     * attempts above have already run, and a window that refuses to come forward is a known
+     * boundary rather than an error.
+     */
+    function requestWindowRaise () {
+      if (!isWindowsPlatform()) {
+        windowRaise = { at: Date.now(), outcome: 'not-windows' }
+        return Promise.resolve()
+      }
+      try {
+        if (typeof fetch !== 'function') {
+          windowRaise = { at: Date.now(), outcome: 'no-fetch' }
+          return Promise.resolve()
+        }
+        windowRaise = { at: Date.now(), outcome: 'pending' }
+        return fetch(RAISE_ROUTE, { method: 'POST', cache: 'no-store' }).then(
+          (response) => {
+            windowRaise = { at: Date.now(), outcome: response.status === 204 ? 'raised' : `http-${String(response.status)}` }
+            if (response.status !== 204) {
+              try {
+                console.warn('session-notifier: the Host refused the window raise', response.status)
+              } catch {
+                /* logging is optional */
+              }
+            }
+          },
+          (error) => {
+            windowRaise = { at: Date.now(), outcome: 'failed', detail: String(error?.message ?? error) }
+            try {
+              console.warn('session-notifier: the window raise request failed', error)
+            } catch {
+              /* logging is optional */
+            }
+          },
+        )
+      } catch (error) {
+        windowRaise = { at: Date.now(), outcome: 'failed', detail: String(error?.message ?? error) }
+        return Promise.resolve()
       }
     }
 
@@ -1257,6 +1326,21 @@ window.__ModuleLoader__.load({
               style: BUTTON_STYLE,
             }, t('action.testDelay')),
             h('button', {
+              key: 'test-raise',
+              type: 'button',
+              onClick: () => {
+                // The HTTP answer lands after the click handler returns, so poll the
+                // probe instead of snapshotting it immediately (which would always read
+                // `pending`).
+                void requestWindowRaise()
+                setFacts(api.probe())
+                for (const delay of [250, 700, 1500]) {
+                  window.setTimeout(() => setFacts(api.probe()), delay)
+                }
+              },
+              style: BUTTON_STYLE,
+            }, t('action.raise')),
+            h('button', {
               key: 'allow',
               type: 'button',
               onClick: () => {
@@ -1266,7 +1350,7 @@ window.__ModuleLoader__.load({
             }, t('action.allow')),
           ]),
           h('p', { key: 'status', style: { margin: 0, fontSize: '12px', lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' } },
-            `${t('status.permission')} ${facts.permission} · ${t('status.audio')} ${facts.audio} · ${t('status.icon')} ${facts.icon} · ${t('status.fired')} ${String(facts.fired)} · ${t('status.last')} ${status}`),
+            `${t('status.permission')} ${facts.permission} · ${t('status.audio')} ${facts.audio} · ${t('status.icon')} ${facts.icon} · ${t('status.fired')} ${String(facts.fired)} · ${t('status.last')} ${status} · ${t('status.raise')} ${String(facts.windowRaise?.outcome ?? 'idle')}`),
           h('p', { key: 'environment', style: { margin: 0, fontSize: '12px', lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' } },
             `${t('status.environment')} ${t(facts.environment === 'electron' ? 'status.environment.electron' : 'status.environment.browser')} · ${t('status.saved')}`),
         ]),
@@ -1440,6 +1524,7 @@ window.__ModuleLoader__.load({
         visibility: typeof document === 'undefined' ? 'unknown' : document.visibilityState,
         focused: typeof document !== 'undefined' && typeof document.hasFocus === 'function' ? document.hasFocus() : null,
         diagnostics: diagnostics.source.getSnapshot(),
+        windowRaise,
       })
 
       /** Service face and console hook: read the options, drive a manual test. */
