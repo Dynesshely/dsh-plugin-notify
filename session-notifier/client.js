@@ -96,6 +96,14 @@ window.__ModuleLoader__.load({
 
     /** Host route that performs the Windows topmost toggle (served by `index.js`). */
     const RAISE_ROUTE = '/plugin/session-notifier/raise-window'
+    /** Host route publishing "this Session was handled here" to the other pages. */
+    const HANDLED_ROUTE = '/plugin/session-notifier/handled'
+    /** Host route streaming Sessions handled by other pages (long-poll). */
+    const HANDLED_EVENTS_ROUTE = '/plugin/session-notifier/handled-events'
+    /** One Session handled here is published once per window; duplicates only spend a request. */
+    const REPORT_DEDUPE_MS = 1500
+    /** Wait after a failed poll before asking the Host again. */
+    const HANDLED_POLL_RETRY_MS = 5000
 
     /** Embedded DSH application icon (96×96 PNG); the notification icon is redrawn from it. */
     const ICON_DATA_URL = 'data:image/png;base64,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'
@@ -1074,7 +1082,7 @@ window.__ModuleLoader__.load({
      * @param deps - live preferences and services.
      */
     function dispatchAlerts (alerts, deps) {
-      const { settings, chime, t, sessions, uiSession, diagnostics, stats, revealSession } = deps
+      const { settings, chime, t, sessions, uiSession, diagnostics, stats, revealSession, reportHandled } = deps
       if (!settings.enabled) {
         diagnostics.record('disabled')
         return
@@ -1106,10 +1114,130 @@ window.__ModuleLoader__.load({
           diagnostics.record('failed')
         }, () => {
           if (typeof revealSession === 'function') revealSession(item.alert.sessionId)
+          // Opening the Session on this device is itself a handling action: the
+          // other devices' toasts for it are now stale too.
+          reportHandled(item.alert.sessionId)
         })
         if (result !== 'sent') outcome = result
       }
       diagnostics.record(outcome)
+    }
+
+    // ---------------------------------------------------------------- cross-device dismissal
+
+    /**
+     * Publish that one Session was handled on this device.
+     *
+     * The Host is the only shared component of the pages viewing one DSH
+     * instance, so the record travels through it. A refused or failed publish is
+     * not worth surfacing: it only means this device's dismissal stays local,
+     * which is the pre-existing behaviour.
+     * @param sessionId - the Session that was handled, or undefined for a test.
+     * @param lastReport - per-page dedupe map (sessionId → timestamp).
+     */
+    function createHandledReporter (lastReport) {
+      return (sessionId) => {
+        if (sessionId === undefined) return false
+        const now = Date.now()
+        if (now - (lastReport.get(sessionId) ?? 0) < REPORT_DEDUPE_MS) return false
+        lastReport.set(sessionId, now)
+        try {
+          if (typeof fetch !== 'function') return false
+          void fetch(HANDLED_ROUTE, {
+            method: 'POST',
+            cache: 'no-store',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ sessionId }),
+          }).catch(() => {
+            /* a Host that cannot take it leaves this device's dismissal local */
+          })
+          return true
+        } catch {
+          /* same: the local dismissal already happened */
+          return false
+        }
+      }
+    }
+
+    /**
+     * Subscribe this page to handled Sessions reported by other pages.
+     *
+     * Uses a long-poll over `fetch` rather than `EventSource`: the Desktop shell
+     * serves the page from `dsh-app://`, where the browser's EventSource carries
+     * neither the connection cookie nor the Host/Origin headers the trust fence
+     * needs. A fetch on the same origin works in both the browser and the shell.
+     * @param onHandled - called with each Session id handled elsewhere.
+     * @param options - retry timing seam for tests.
+     * @returns the disposer stopping the loop.
+     */
+    function subscribeHandled (onHandled, options = {}) {
+      if (typeof fetch !== 'function') return () => {}
+      const retryMs = options.retryMs ?? HANDLED_POLL_RETRY_MS
+      const controller = typeof AbortController === 'function' ? new AbortController() : undefined
+      let stopped = false
+      let timer
+      /** One poll round; `lastId` is the newest record already replayed. */
+      const poll = (lastId) => {
+        if (stopped) return
+        const headers = { accept: 'application/json' }
+        if (lastId !== undefined) headers['last-event-id'] = lastId
+        fetch(HANDLED_EVENTS_ROUTE, {
+          method: 'GET',
+          cache: 'no-store',
+          headers,
+          signal: controller?.signal,
+        }).then((response) => {
+          if (stopped) return
+          if (response.status === 404) {
+            // A Host that predates the route: cross-device dismissal is simply
+            // unavailable here, so stop polling instead of retrying forever.
+            stopped = true
+            return
+          }
+          if (response.status === 204) {
+            poll(lastId)
+            return
+          }
+          if (!response.ok) {
+            schedule(lastId, retryMs)
+            return
+          }
+          return response.json().then((body) => {
+            if (stopped) return
+            const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : undefined
+            const id = typeof body?.id === 'string' ? body.id : lastId
+            if (sessionId !== undefined) {
+              try {
+                onHandled(sessionId)
+              } catch {
+                /* one bad dismissal must not stop the loop */
+              }
+            }
+            poll(id)
+          }, () => {
+            schedule(lastId, retryMs)
+          })
+        }, () => {
+          schedule(lastId, retryMs)
+        })
+      }
+      const schedule = (lastId, delay) => {
+        if (stopped) return
+        timer = setTimeout(() => {
+          timer = undefined
+          poll(lastId)
+        }, delay)
+      }
+      poll(undefined)
+      return () => {
+        stopped = true
+        if (timer !== undefined) clearTimeout(timer)
+        try {
+          controller?.abort()
+        } catch {
+          /* already closed */
+        }
+      }
     }
 
     // ---------------------------------------------------------------- Settings page
@@ -1389,6 +1517,32 @@ window.__ModuleLoader__.load({
       const chime = createChime()
       const stats = { fired: 0, last: null }
       let primed = false
+      /** Per-page publish dedupe: the same Session handled once per burst is one request. */
+      const lastReport = new Map()
+      const reportHandledRaw = createHandledReporter(lastReport)
+      /** Cross-device counters, surfaced through `probe()` for diagnosis. */
+      const crossDevice = { published: 0, lastPublished: null, received: 0, lastReceived: null }
+      /** @param sessionId - a Session this page just handled (dismissed locally already). */
+      const reportHandled = (sessionId) => {
+        if (reportHandledRaw(sessionId) === true) {
+          crossDevice.published += 1
+          crossDevice.lastPublished = sessionId
+        }
+      }
+      /**
+       * Dismiss a toast because *another* device handled that Session. The local
+       * page did not handle it, so the record must not be published again.
+       * @param sessionId - the Session handled elsewhere.
+       */
+      function dismissFromOtherDevice (sessionId) {
+        crossDevice.received += 1
+        crossDevice.lastReceived = sessionId
+        dismissNotification(`session-${sessionId}`)
+      }
+      // Subscribed before the first status snapshot: a page opened after another
+      // device answered still gets the replay window, so its just-created toast
+      // (from the initial snapshot) can be retired too.
+      ctx.effect(() => subscribeHandled(dismissFromOtherDevice), 'session-notifier: cross-device dismissals')
 
       ctx.effect(() => ctx.locale?.register?.(NS, DICT), 'session-notifier: dictionaries')
       const t = ctx.locale.bind(NS)
@@ -1402,6 +1556,7 @@ window.__ModuleLoader__.load({
         diagnostics,
         stats,
         revealSession,
+        reportHandled,
       })
 
       /** Scope captured once the service injection runs; dispatch before it only serves manual tests. */
@@ -1525,6 +1680,7 @@ window.__ModuleLoader__.load({
         focused: typeof document !== 'undefined' && typeof document.hasFocus === 'function' ? document.hasFocus() : null,
         diagnostics: diagnostics.source.getSnapshot(),
         windowRaise,
+        crossDevice: { ...crossDevice },
       })
 
       /** Service face and console hook: read the options, drive a manual test. */
@@ -1630,13 +1786,20 @@ window.__ModuleLoader__.load({
           const onStatus = () => {
             const next = status.getSnapshot()
             const alerts = collectAlerts(previous, next, scope.sessions, settings.get())
-            // The user answered the notification by typing into that Session: the toast has done
-            // its job and must stop claiming the Session still needs them. `running` going back to
-            // true is that hand-over, whether the user sent a prompt or the Session resumed itself.
+            // A local transition that means the user is done with that Session: the toast has
+            // done its job, and the other pages' toasts for it are stale too. Three hand-overs
+            // count: the Session resumed running (typed into it, or a loop took over), its
+            // pending interaction disappeared (answered here), and its unread completion was
+            // read (opened here). The local toast is dismissed in all three; only this page
+            // reports to the Host, and a report received from another page is not re-reported.
             for (const [sessionId, state] of next) {
-              if (state.running === true && previous.get(sessionId)?.running !== true) {
-                dismissNotification(`session-${sessionId}`)
-              }
+              const before = previous.get(sessionId)
+              const resumed = before !== undefined && before.running === false && state.running === true
+              const answered = before?.pendingInteraction !== undefined && state.pendingInteraction === undefined
+              const readCompletion = before?.completionUnread === true && state.completionUnread !== true
+              if (!resumed && !answered && !readCompletion) continue
+              dismissNotification(`session-${sessionId}`)
+              reportHandled(sessionId)
             }
             previous = next
             primed = true

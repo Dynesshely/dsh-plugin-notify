@@ -16,6 +16,11 @@ import assert from 'node:assert/strict'
 const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 const realSetTimeout = setTimeout
 
+/** Routes mirrored from client.js: the fake Host serves them by URL. */
+const RAISE_ROUTE = '/plugin/session-notifier/raise-window'
+const HANDLED_ROUTE = '/plugin/session-notifier/handled'
+const HANDLED_EVENTS_ROUTE = '/plugin/session-notifier/handled-events'
+
 /** Settle window plus a margin, mirroring COMPLETION_SETTLE_MS in client.js. */
 const SETTLE_MS = 1300
 /** Goal quiet window plus a margin, mirroring GOAL_QUIET_MS in client.js. */
@@ -151,7 +156,10 @@ const withGoal = (row, phase, rounds) => ({
 })
 
 /** Boot one isolated plugin instance. */
-async function boot ({ storage = {}, focused = true, current = undefined, permission = 'granted', initialStatus = undefined, notificationApi = true, withWorkspace = true, userAgent = 'test-browser', raiseRejects = false } = {}) {
+let handledPolls = 0
+const handledPollCount = () => handledPolls
+
+async function boot ({ storage = {}, focused = true, current = undefined, permission = 'granted', initialStatus = undefined, notificationApi = true, withWorkspace = true, userAgent = 'test-browser', raiseRejects = false, noHandledRoutes = false } = {}) {
   notifications.length = 0
   audioContexts = []
   permissionRequests = 0
@@ -205,11 +213,48 @@ async function boot ({ storage = {}, focused = true, current = undefined, permis
   if (notificationApi) globalThis.Notification = FakeNotification
   else delete globalThis.Notification
   Object.defineProperty(globalThis, 'navigator', { value: { userAgent }, configurable: true, writable: true })
-  /** Every request the plugin made to the Host half. */
+  /** Every request the plugin made to the Host half's window-raise route. */
   const raised = []
+  /** Every handled-Session publish this page sent. */
+  const handledReports = []
+  /** Remote handled records waiting for the page's next long poll. */
+  const remoteQueue = []
+  let remoteSeq = 0
+  /** In-flight long polls, resolved by `remoteHandled`. */
+  const pendingPolls = []
   globalThis.fetch = (url, init) => {
-    raised.push({ url, init })
-    return raiseRejects ? Promise.reject(new Error('offline')) : Promise.resolve({ ok: true })
+    if (url === RAISE_ROUTE) {
+      raised.push({ url, init })
+      return raiseRejects ? Promise.reject(new Error('offline')) : Promise.resolve({ ok: true, status: 204 })
+    }
+    if (url === HANDLED_ROUTE) {
+      let body
+      try {
+        body = JSON.parse(init?.body ?? '{}')
+      } catch {
+        body = undefined
+      }
+      handledReports.push(body)
+      return Promise.resolve({ ok: true, status: 204 })
+    }
+    if (url === HANDLED_EVENTS_ROUTE) {
+      handledPolls += 1
+      if (noHandledRoutes) return Promise.resolve({ ok: false, status: 404 })
+      const next = remoteQueue.shift()
+      if (next !== undefined) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => next })
+      }
+      return new Promise((resolve, reject) => {
+        const entry = { resolve, reject }
+        pendingPolls.push(entry)
+        init?.signal?.addEventListener?.('abort', () => {
+          const index = pendingPolls.indexOf(entry)
+          if (index >= 0) pendingPolls.splice(index, 1)
+          reject(new Error('aborted'))
+        })
+      })
+    }
+    return Promise.resolve({ ok: false, status: 404 })
   }
   globalThis.Image = class {
     set src (value) { this.value = value }
@@ -323,6 +368,16 @@ async function boot ({ storage = {}, focused = true, current = undefined, permis
     focusCalls: () => focusCalls,
     /** Requests the plugin sent to the Host half's window-raise route. */
     raised,
+    /** Handled-Session publishes this page sent. */
+    handledReports,
+    /** Simulate another device handling a Session: resolves the page's next long poll. */
+    remoteHandled: (sessionId) => {
+      remoteSeq += 1
+      const record = { sessionId, id: String(remoteSeq) }
+      const pending = pendingPolls.shift()
+      if (pending !== undefined) pending.resolve({ ok: true, status: 200, json: async () => record })
+      else remoteQueue.push(record)
+    },
     fireGesture: () => {
       for (const handler of [...gestureHandlers.pointerdown]) handler()
     },
@@ -695,6 +750,122 @@ await check('an interaction toast is retired when the Session resumes after the 
   statusStore.set(snapshot([ 's1', { running: false, pendingInteraction: question('q1', 'well?'), completionUnread: false } ]))
   assert.equal(notifications.length, 1)
   statusStore.set(snapshot(running('s1')))
+  assert.equal(notifications[0].closed, true)
+})
+
+// ---------------------------------------------------------------- cross-device dismissal
+
+const tick = () => new Promise((resolve) => realSetTimeout(resolve, 0))
+
+await check('handling a Session here publishes it to the Host once', async () => {
+  const { statusStore, clock, handledReports } = await boot()
+  statusStore.set(snapshot(running('s1')))
+  statusStore.set(snapshot(idle('s1')))
+  clock.advance(SETTLE_MS)
+  assert.equal(notifications.length, 1)
+  statusStore.set(snapshot(running('s1')))
+  await tick()
+  assert.deepEqual(handledReports, [{ sessionId: 's1' }])
+})
+
+await check('opening a notification publishes the Session as handled', async () => {
+  const { statusStore, clock, handledReports } = await boot()
+  statusStore.set(snapshot(running('s1')))
+  statusStore.set(snapshot(idle('s1')))
+  clock.advance(SETTLE_MS)
+  notifications[0].onclick()
+  await tick()
+  assert.deepEqual(handledReports, [{ sessionId: 's1' }])
+})
+
+await check('answering an interaction publishes it as handled and retires the toast', async () => {
+  const { statusStore, handledReports } = await boot()
+  statusStore.set(snapshot([ 's1', { running: false, pendingInteraction: question('q1', 'well?'), completionUnread: false } ]))
+  assert.equal(notifications.length, 1)
+  statusStore.set(snapshot(running('s1')))
+  await tick()
+  assert.deepEqual(handledReports, [{ sessionId: 's1' }])
+  assert.equal(notifications[0].closed, true)
+})
+
+await check('reading an unread completion publishes it as handled', async () => {
+  const { statusStore, clock, handledReports } = await boot({ initialStatus: snapshot(idle('s1')) })
+  statusStore.set(snapshot(idle('s1', { completionUnread: true })))
+  clock.advance(SETTLE_MS)
+  assert.equal(notifications.length, 1)
+  statusStore.set(snapshot(idle('s1', { completionUnread: false })))
+  await tick()
+  assert.deepEqual(handledReports, [{ sessionId: 's1' }])
+})
+
+await check('repeated local hand-overs of one Session publish once per burst', async () => {
+  const { statusStore, handledReports } = await boot()
+  statusStore.set(snapshot(running('s1')))
+  statusStore.set(snapshot(idle('s1')))
+  statusStore.set(snapshot(running('s1')))
+  statusStore.set(snapshot(idle('s1')))
+  statusStore.set(snapshot(running('s1')))
+  await tick()
+  assert.equal(handledReports.length, 1, 'a resumed/settled burst is one report')
+})
+
+await check('a Session handled on another device retires this page\'s toast', async () => {
+  const { statusStore, clock, remoteHandled, handledReports } = await boot()
+  statusStore.set(snapshot(running('s1')))
+  statusStore.set(snapshot(idle('s1')))
+  clock.advance(SETTLE_MS)
+  assert.equal(notifications.length, 1)
+  remoteHandled('s1')
+  await tick()
+  assert.equal(notifications[0].closed, true, 'the stale toast is taken down')
+  assert.deepEqual(handledReports, [], 'a remote dismissal is not echoed back to the Host')
+})
+
+await check('cross-device counters are visible through probe', async () => {
+  const { statusStore, clock, remoteHandled, api } = await boot()
+  statusStore.set(snapshot(running('s1')))
+  statusStore.set(snapshot(idle('s1')))
+  clock.advance(SETTLE_MS)
+  statusStore.set(snapshot(running('s1')))
+  remoteHandled('s1')
+  await tick()
+  const probe = api.probe()
+  assert.equal(probe.crossDevice.published, 1)
+  assert.equal(probe.crossDevice.lastPublished, 's1')
+  assert.equal(probe.crossDevice.received, 1)
+  assert.equal(probe.crossDevice.lastReceived, 's1')
+})
+
+await check('a remote handling of another Session leaves this page\'s toast alone', async () => {
+  const { statusStore, clock, remoteHandled } = await boot()
+  statusStore.set(snapshot(running('s1'), running('s2')))
+  statusStore.set(snapshot(idle('s1'), idle('s2')))
+  clock.advance(SETTLE_MS)
+  assert.equal(notifications.length, 2)
+  remoteHandled('s2')
+  await tick()
+  assert.deepEqual(notifications.map((item) => item.closed), [false, true])
+})
+
+await check('a Host without the handled routes stops the poll instead of retrying forever', async () => {
+  const { statusStore, clock } = await boot({ noHandledRoutes: true })
+  statusStore.set(snapshot(running('s1')))
+  statusStore.set(snapshot(idle('s1')))
+  clock.advance(SETTLE_MS)
+  // One initial 404 ends the loop; a second poll would require another fetch.
+  const before = handledPollCount()
+  clock.advance(60_000)
+  assert.equal(handledPollCount(), before, 'no polling after the Host refused the route')
+})
+
+await check('a failed Host publish leaves the local dismissal working', async () => {
+  const { statusStore, clock, api } = await boot({ raiseRejects: true })
+  void api
+  statusStore.set(snapshot(running('s1')))
+  statusStore.set(snapshot(idle('s1')))
+  clock.advance(SETTLE_MS)
+  statusStore.set(snapshot(running('s1')))
+  await tick()
   assert.equal(notifications[0].closed, true)
 })
 

@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-notifier",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "DSH web plugin: a chime and a desktop notification when a session needs your answer, an approval, or has genuinely stopped for you.",

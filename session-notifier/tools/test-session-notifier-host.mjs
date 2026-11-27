@@ -85,9 +85,11 @@ await check('the plugin exports a Cordis name and apply', () => {
   assert.equal(typeof plugin.apply, 'function')
 })
 
-await check('the browser half and the Host half agree on the raise route', () => {
+await check('the browser half and the Host half agree on the routes', () => {
   assert.ok(plugin.RAISE_ROUTE.startsWith('/plugin/'), 'the route is namespaced under /plugin/')
   assert.ok(clientSource.includes(`'${plugin.RAISE_ROUTE}'`), 'client.js posts to the same path')
+  assert.ok(clientSource.includes(`'${plugin.HANDLED_ROUTE}'`), 'client.js publishes to the handled route')
+  assert.ok(clientSource.includes(`'${plugin.HANDLED_EVENTS_ROUTE}'`), 'client.js polls the handled stream')
 })
 
 await check('the diagnostic trail lives in the DSH home', () => {
@@ -95,27 +97,30 @@ await check('the diagnostic trail lives in the DSH home', () => {
   assert.ok(path.endsWith('session-notifier-raise.log'), path)
 })
 
-await check('the route is registered only where a window can be raised', () => {
+await check('handled routes are registered on every platform; the raise route only on Windows', () => {
   const { ctx, routes, injected } = createHost()
   plugin.apply(ctx)
-  if (process.platform !== 'win32') {
-    assert.equal(injected.length, 0, 'a non-Windows Host registers nothing at all')
-    assert.equal(routes.length, 0)
-    return
+  assert.deepEqual(injected, [['webServer', 'connection']], 'the routes wait for the carrier and their trust fence')
+  const paths = routes.map((route) => route.path)
+  assert.ok(paths.includes(plugin.HANDLED_ROUTE), 'the publish route is every-platform')
+  assert.ok(paths.includes(plugin.HANDLED_EVENTS_ROUTE), 'the stream route is every-platform')
+  if (process.platform === 'win32') {
+    assert.ok(paths.includes(plugin.RAISE_ROUTE), 'the raise route is Windows-only')
+    assert.equal(routes.length, 3)
+  } else {
+    assert.ok(!paths.includes(plugin.RAISE_ROUTE), 'a non-Windows Host registers no raise route')
+    assert.equal(routes.length, 2)
   }
-  assert.deepEqual(injected, [['webServer', 'connection']], 'the route waits for the carrier and its trust fence')
-  assert.equal(routes.length, 1)
-  assert.equal(routes[0].kind, 'exact')
-  assert.equal(routes[0].path, plugin.RAISE_ROUTE)
+  assert.ok(routes.every((route) => route.kind === 'exact'))
 })
 
-await check('the registration is disposed with the plugin', () => {
+await check('the registrations are disposed with the plugin', () => {
   const { ctx, routes, disposers } = createHost()
   plugin.apply(ctx)
-  if (process.platform !== 'win32') return
-  assert.equal(routes.length, 1)
+  const expected = process.platform === 'win32' ? 3 : 2
+  assert.equal(routes.length, expected)
   for (const dispose of disposers.reverse()) dispose()
-  assert.equal(routes.length, 0, 'disposal removes the route')
+  assert.equal(routes.length, 0, 'disposal removes every route')
 })
 
 await check('an untrusted caller is refused by the connection fence first', () => {
@@ -234,6 +239,196 @@ await check('the spawned PowerShell actually runs the encoded command', async ()
   assert.equal(code, 0)
   assert.equal(readFileSync(marker, 'utf8').trim(), 'ran', 'the encoded command must actually execute')
   rmSync(dir, { recursive: true, force: true })
+})
+
+// ---------------------------------------------------------------- cross-device dismissal
+
+/** @returns a request double with the given method, headers, and body. */
+function createRequest ({ method = 'POST', headers = {}, body = '' } = {}) {
+  const listeners = new Map()
+  return {
+    method,
+    headers,
+    async *[Symbol.asyncIterator] () {
+      if (body !== '') yield Buffer.from(body)
+    },
+    on (type, handler) {
+      const list = listeners.get(type) ?? []
+      list.push(handler)
+      listeners.set(type, list)
+      return this
+    },
+    emit (type) {
+      for (const handler of listeners.get(type) ?? []) handler()
+    },
+  }
+}
+
+/** @returns a response double recording status, headers, and streamed chunks. */
+function createStreamResponse () {
+  const record = { status: undefined, headers: undefined, chunks: [], ended: false }
+  return {
+    record,
+    writeHead (status, headers) {
+      record.status = status
+      record.headers = headers
+      return this
+    },
+    write (chunk) {
+      record.chunks.push(String(chunk))
+      return true
+    },
+    end (chunk) {
+      if (chunk !== undefined) record.chunks.push(String(chunk))
+      record.ended = true
+      record.onEnd?.()
+    },
+    on () { return this },
+  }
+}
+
+await check('the handled hub deduplicates the same Session across pages', () => {
+  const hub = plugin.createHandledHub()
+  const first = hub.publish('s1', 1000)
+  const second = hub.publish('s1', 1500)
+  assert.equal(second.id, first.id, 'a second page reporting the same answer is one record')
+  assert.equal(hub.size(), 1)
+})
+
+await check('the handled hub prunes old records and replays only newer ones', () => {
+  const hub = plugin.createHandledHub()
+  const first = hub.publish('s1', 1000)
+  hub.publish('s2', 2000)
+  const replayed = hub.since(first.id)
+  assert.deepEqual(replayed.map((record) => record.sessionId), ['s2'])
+  hub.publish('s3', 1000 + plugin.HANDLED_TTL_MS + 1)
+  assert.equal(hub.size(), 2, 'the expired record leaves the replay window')
+  assert.deepEqual(hub.since(first.id).map((record) => record.sessionId), ['s2', 's3'])
+})
+
+await check('a handled record reaches every current subscriber', () => {
+  const hub = plugin.createHandledHub()
+  const seen = []
+  const offA = hub.subscribe((record) => seen.push(`a:${record.sessionId}`))
+  const offB = hub.subscribe((record) => seen.push(`b:${record.sessionId}`))
+  hub.publish('s1', 1000)
+  offA()
+  hub.publish('s2', 3000)
+  offB()
+  assert.deepEqual(seen, ['a:s1', 'b:s1', 'b:s2'])
+})
+
+await check('the publish route refuses an untrusted caller before touching the hub', async () => {
+  let published = 0
+  const handler = plugin.createHandledPublishHandler(() => { published += 1 }, { requestRejection: () => 403 })
+  const response = createResponse()
+  await handler(createRequest({ headers: { 'content-type': 'application/json' }, body: '{"sessionId":"s1"}' }), response)
+  assert.equal(published, 0)
+  assert.equal(response.record.status, 403)
+})
+
+await check('the publish route accepts a valid JSON body and answers 204', async () => {
+  const published = []
+  const handler = plugin.createHandledPublishHandler((sessionId) => { published.push(sessionId) }, {})
+  const response = createResponse()
+  await handler(createRequest({ headers: { 'content-type': 'application/json' }, body: '{"sessionId":"s1"}' }), response)
+  assert.deepEqual(published, ['s1'])
+  assert.equal(response.record.status, 204)
+  assert.equal(response.record.headers['cache-control'], 'no-store')
+})
+
+await check('the publish route refuses GET, malformed bodies, and oversized bodies', async () => {
+  const published = []
+  const handler = plugin.createHandledPublishHandler((sessionId) => { published.push(sessionId) }, {})
+
+  const wrongMethod = createResponse()
+  await handler(createRequest({ method: 'GET' }), wrongMethod)
+  assert.equal(wrongMethod.record.status, 405)
+  assert.equal(wrongMethod.record.headers.allow, 'POST')
+
+  for (const body of ['not json', '{"sessionId":""}', '{"sessionId":42}', 'null', '[]']) {
+    const response = createResponse()
+    await handler(createRequest({ body }), response)
+    assert.equal(response.record.status, 400, `body ${body}`)
+  }
+  const huge = createResponse()
+  await handler(createRequest({ body: `{"sessionId":"${'x'.repeat(plugin.HANDLED_BODY_LIMIT)}"}` }), huge)
+  assert.equal(huge.record.status, 400, 'oversized bodies are refused')
+
+  assert.deepEqual(published, [])
+})
+
+await check('the stream route refuses an untrusted caller first', () => {
+  const handler = plugin.createHandledEventsHandler(plugin.createHandledHub(), { requestRejection: () => 401 })
+  const response = createStreamResponse()
+  handler(createRequest({ method: 'GET', headers: { accept: 'text/event-stream' } }), response)
+  assert.equal(response.record.status, 401)
+})
+
+await check('the stream route refuses methods other than GET', () => {
+  const handler = plugin.createHandledEventsHandler(plugin.createHandledHub(), {})
+  const response = createStreamResponse()
+  handler(createRequest({ method: 'POST', headers: { accept: 'text/event-stream' } }), response)
+  assert.equal(response.record.status, 405)
+  assert.equal(response.record.headers.allow, 'GET')
+})
+
+await check('a fetch client gets one handled Session per long poll, then 204', async () => {
+  const hub = plugin.createHandledHub()
+  const handler = plugin.createHandledEventsHandler(hub, {}, { pollWaitMs: 5 })
+  const waiting = createStreamResponse()
+  const done = new Promise((resolve) => { waiting.record.onEnd = resolve })
+  handler(createRequest({ method: 'GET', headers: { accept: 'application/json' } }), waiting)
+  hub.publish('s1', 1000)
+  await done
+  assert.equal(waiting.record.status, 200)
+  assert.deepEqual(JSON.parse(waiting.record.chunks.join('')), { sessionId: 's1', id: '1' })
+
+  const replay = createStreamResponse()
+  const replayDone = new Promise((resolve) => { replay.record.onEnd = resolve })
+  handler(createRequest({ method: 'GET', headers: { accept: 'application/json', 'last-event-id': '1' } }), replay)
+  hub.publish('s2', 5000)
+  await replayDone
+  assert.deepEqual(JSON.parse(replay.record.chunks.join('')), { sessionId: 's2', id: '2' })
+
+  const idle = createStreamResponse()
+  const idleDone = new Promise((resolve) => { idle.record.onEnd = resolve })
+  handler(createRequest({ method: 'GET', headers: { accept: 'application/json', 'last-event-id': '2' } }), idle)
+  await idleDone
+  assert.equal(idle.record.status, 204, 'nothing missed and nothing new')
+})
+
+await check('the SSE stream replays missed records and streams new ones', () => {
+  const hub = plugin.createHandledHub()
+  hub.publish('old', 1000)
+  const handler = plugin.createHandledEventsHandler(hub, {}, { heartbeatMs: 100_000, pollWaitMs: 5 })
+  const response = createStreamResponse()
+  handler(createRequest({ method: 'GET', headers: { accept: 'text/event-stream', 'last-event-id': '0' } }), response)
+  assert.equal(response.record.status, 200)
+  assert.equal(response.record.headers['content-type'], 'text/event-stream; charset=utf-8')
+  assert.equal(response.record.headers['cache-control'], 'no-store')
+  assert.match(response.record.chunks.join(''), /event: handled\ndata: \{"sessionId":"old"\}/u)
+  hub.publish('new', 2000)
+  assert.match(response.record.chunks.join(''), /data: \{"sessionId":"new"\}/u)
+})
+
+await check('closing the stream unsubscribes from the hub', () => {
+  const hub = plugin.createHandledHub()
+  const handler = plugin.createHandledEventsHandler(hub, {}, { heartbeatMs: 100_000 })
+  const response = createStreamResponse()
+  const request = createRequest({ method: 'GET', headers: { accept: 'text/event-stream' } })
+  handler(request, response)
+  hub.publish('s1', 1000)
+  const before = response.record.chunks.length
+  request.emit('close')
+  hub.publish('s2', 5000)
+  assert.equal(response.record.chunks.length, before, 'a closed stream receives nothing more')
+})
+
+await check('the handled frame is one id/event/data block', () => {
+  const hub = plugin.createHandledHub()
+  const record = hub.publish('s1', 1000)
+  assert.equal(plugin.handledFrame(record), `id: ${record.id}\nevent: handled\ndata: {"sessionId":"s1"}\n\n`)
 })
 
 await check('the raise never spawns the interpreter detached', () => {
