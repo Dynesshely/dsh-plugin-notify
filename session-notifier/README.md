@@ -46,7 +46,25 @@ DSH Web 插件：当**某个会话需要你介入**，或**它真的停下来等
       - 代价与边界：这次抬窗要起一个 PowerShell（约 0.5s），所以是 fire-and-forget，不阻塞点击；跨进程/跨虚拟桌面、锁屏时仍然可能失败，失败就只是没抬起窗口，不影响换会话。
       - 其他平台不注册这条路由，只走页面自己的 `focus()`，行为与之前一致。
    - **你回到该会话继续输入时，那条通知会自动消失**：`running` 从 false 变回 true 就说明你已经接管了（无论是你发了新 prompt，还是循环自己续跑），那条 toast 不该再宣称「等你处理」。只关该会话自己的那条，其它会话的提醒照常留着。
+   - **在另一台设备/窗口上处理过该会话时，这条通知也会自动消失**（见下一节）。
    - 权限在第一次用户手势时**只申请一次**；拒绝后仅保留提示音，设置页会说明原因。
+
+## 跨设备关闭过期通知
+
+桌面通知只存在于**创建它的那个页面**。同一个 DSH 实例被多台设备（或多窗口）打开时，你在 A 设备上回答了提问、批准了审批、打开了会话或直接接管继续输入，B 设备上那条通知仍会继续宣称「这个会话在等你」。插件通过 Host 半边把「该会话已处理」广播给同一实例上的其它页面：
+
+- **Host 半边**（`index.js`，所有平台）：
+  - `POST /plugin/session-notifier/handled`：发布 `{ "sessionId": "..." }`。同一会话 2 秒内的重复上报只算一条（一次回答会被多个页面同时观察到）。
+  - `GET /plugin/session-notifier/handled-events`：长轮询获取「其它页面处理过的会话」，带 `Last-Event-ID` 时回放最近 60 秒的记录；`Accept: text/event-stream` 走 SSE。
+  - 记录只在进程内保留（TTL 60 秒、最多 200 条），不落盘，也不跨 DSH 实例。
+  - 两条路由都先过 composition 的 `connection.requestRejection`（与抬窗路由同一道信任围栏）。浏览器半边用 `fetch` 而非 `EventSource`：桌面外壳的 `dsh-app://` 页面里 `EventSource` 拿不到信任围栏需要的凭据。
+- **浏览器半边**：本页观察到以下任一「已处理」信号时，关闭本页该会话的通知，并上报一次（同会话 1.5 秒内去重）：
+  - `running` 由 false 变 true（接管/续跑）；
+  - `pendingInteraction` 消失（在本页回答了提问/审批）；
+  - `completionUnread` 由 true 变 false（在本页读掉了完成）；
+  - 点击了该会话的通知。
+- 收到其它页面广播的 `handled` 时只关闭对应通知，**不会再次上报**，避免回环。
+- 局限：只覆盖连到**同一个 DSH 进程**的页面；页面必须开着（通知本来就由页面创建）；广播有几十毫秒级的轮询延迟；未登录/跨站调用会被信任围栏拒绝。
 
 ## 设置
 
@@ -77,7 +95,7 @@ DSH Web 插件：当**某个会话需要你介入**，或**它真的停下来等
 ## 控制台 / 服务面
 
 ```js
-__dshSessionNotifier.probe()        // 音频/权限/图标/计数/最近一次/诊断
+__dshSessionNotifier.probe()        // 音频/权限/图标/计数/最近一次/诊断/跨设备计数
 __dshSessionNotifier.describe()     // 当前全部设置与最近一次提醒
 __dshSessionNotifier.test()         // 立刻试一次「需要你介入」
 __dshSessionNotifier.test('done')   // 立刻试一次「已完成」
@@ -87,7 +105,7 @@ __dshSessionNotifier.resetSettings()
 __dshSessionNotifier.setTitleTemplate('question', '【{session}】来消息了')
 ```
 
-旧钩子名 `__dshReminder` 保留为同一对象的别名；服务面为 `ctx.sessionNotifier`。
+旧钩子名 `__dshReminder` 保留为同一对象的别名；服务面为 `ctx.sessionNotifier`。`probe().crossDevice` 给出本页发布/接收过的 `handled` 记录数（`published` / `received`）与最近一次的会话 id，用来判断跨设备关闭是否在正常工作。
 
 ## 兼容与降级
 
@@ -110,12 +128,12 @@ plugin_manager remove_bundle   ->  dsh-session-notifier
 ## 验证
 
 ```bash
-node session-notifier/tools/test-session-notifier.mjs        # 浏览器半边，71 项
-node session-notifier/tools/test-session-notifier-host.mjs   # 宿主半边，13 项
+node session-notifier/tools/test-session-notifier.mjs        # 浏览器半边，81 项
+node session-notifier/tools/test-session-notifier-host.mjs   # 宿主半边，31 项
 npm run check                                               # 语法检查
 ```
 
-测试用受控时钟加载真实 `client.js`，覆盖：完成候选的 settle/goal quiet/轮次推进丢弃、交互立即提醒与按 key 去重、子会话两种标记（`origin`/`parentId`）的完成与交互策略、聚焦/主视图跳过（投递时求值）、重连基线门禁、首次快照静默、提示音冷却与批量上限、Windows 安全 tag/关闭旧通知/圆角图标/`requireInteraction`、点击通知打开对应会话（含 `uiWorkspace` 缺席与无会话的手动测试）、用户接管后撤下旧通知（只撤该会话那条）、权限与不支持环境的降级、设置持久化与两个旧键的迁移、标题模板、设置页结构、控制台 API、dispose。
+测试用受控时钟加载真实 `client.js`，覆盖：完成候选的 settle/goal quiet/轮次推进丢弃、交互立即提醒与按 key 去重、子会话两种标记（`origin`/`parentId`）的完成与交互策略、聚焦/主视图跳过（投递时求值）、重连基线门禁、首次快照静默、提示音冷却与批量上限、Windows 安全 tag/关闭旧通知/圆角图标/`requireInteraction`、点击通知打开对应会话（含 `uiWorkspace` 缺席与无会话的手动测试）、用户接管后撤下旧通知（只撤该会话那条）、**本页处理与远端处理的广播/去重/不回声**、权限与不支持环境的降级、设置持久化与两个旧键的迁移、标题模板、设置页结构、控制台 API、dispose。
 
 它**不能**证明真实浏览器里出声、Windows toast 的最终观感与桌面应用内的行为——这些需要真实 GUI 验证。
 
